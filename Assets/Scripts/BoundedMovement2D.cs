@@ -1,6 +1,8 @@
 using UnityEngine;
-using UnityEngine.InputSystem;
 
+/// <summary>
+/// Handles player movement within game screen bounds using GameInputManager.
+/// </summary>
 public class BoundedMovement2D : MonoBehaviour
 {
     public GameScreenManager gameScreenManager;
@@ -8,12 +10,16 @@ public class BoundedMovement2D : MonoBehaviour
 
     private Vector3 velocity;
     private Vector3 lastValidPosition;
-    private Vector2 moveInput;
 
     private void Start()
     {
-        // Store initial position as last valid position
         lastValidPosition = transform.position;
+        
+        // Subscribe to input events
+        if (GameInputManager.Instance != null)
+        {
+            GameInputManager.Instance.EnableGameplay();
+        }
     }
 
     private void Update()
@@ -23,32 +29,11 @@ public class BoundedMovement2D : MonoBehaviour
             return;
         }
 
-        // Get input using New Input System
-        var keyboard = Keyboard.current;
-        
-        moveInput = Vector2.zero;
-        
-        if (keyboard != null)
+        // Get movement input from GameInputManager
+        Vector2 moveInput = Vector2.zero;
+        if (GameInputManager.Instance != null)
         {
-            // Horizontal input
-            if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed)
-            {
-                moveInput.x = -1f;
-            }
-            else if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed)
-            {
-                moveInput.x = 1f;
-            }
-            
-            // Vertical input
-            if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed)
-            {
-                moveInput.y = -1f;
-            }
-            else if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed)
-            {
-                moveInput.y = 1f;
-            }
+            moveInput = GameInputManager.Instance.MoveInput;
         }
 
         // Calculate desired velocity

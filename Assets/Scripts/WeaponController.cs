@@ -3,7 +3,8 @@ using UnityEngine.InputSystem;
 using System;
 
 /// <summary>
-/// Controls weapon firing with injectable shooting strategies
+/// Controls weapon firing with injectable shooting strategies.
+/// Uses GameInputManager for centralized input handling.
 /// </summary>
 public class WeaponController : MonoBehaviour
 {
@@ -14,8 +15,8 @@ public class WeaponController : MonoBehaviour
     
     [Header("Shooting Settings")]
     [SerializeField] private IShootingStrategy currentStrategy;
-    [SerializeField] private ScriptableObject strategyObject; // For inspector assignment
-    [SerializeField] private Vector2 defaultDirection = Vector2.up;
+    [SerializeField] private ScriptableObject strategyObject;
+    [SerializeField] private Vector2 defaultDirection = Vector2.right;
     [SerializeField] private bool autoFire = false;
     
     [Header("Input Settings")]
@@ -35,7 +36,6 @@ public class WeaponController : MonoBehaviour
     
     private void Awake()
     {
-        // Get references if not assigned
         if (bulletPool == null)
         {
             bulletPool = BulletPool.Instance;
@@ -51,7 +51,6 @@ public class WeaponController : MonoBehaviour
             statsManager = GetComponent<PlayerStatsManager>();
         }
         
-        // Load strategy from ScriptableObject
         if (strategyObject != null && strategyObject is IShootingStrategy)
         {
             currentStrategy = strategyObject as IShootingStrategy;
@@ -62,47 +61,55 @@ public class WeaponController : MonoBehaviour
     
     private void Start()
     {
-        // Get stats from player stats manager
         if (statsManager != null)
         {
             currentFireRate = statsManager.FireRate;
             currentDamage = statsManager.Damage;
         }
+
+        // Subscribe to GameInputManager fire events
+        if (GameInputManager.Instance != null)
+        {
+            GameInputManager.Instance.OnFirePressed += HandleFirePressed;
+            GameInputManager.Instance.OnFireReleased += HandleFireReleased;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        // Unsubscribe from events
+        if (GameInputManager.Instance != null)
+        {
+            GameInputManager.Instance.OnFirePressed -= HandleFirePressed;
+            GameInputManager.Instance.OnFireReleased -= HandleFireReleased;
+        }
+    }
+
+    private void HandleFirePressed()
+    {
+        isFiring = true;
+    }
+
+    private void HandleFireReleased()
+    {
+        isFiring = false;
     }
     
     private void Update()
     {
         timeSinceLastShot += Time.deltaTime;
         
-        // Handle input
-        HandleInput();
+        // Update firing state from GameInputManager (for held state)
+        if (GameInputManager.Instance != null)
+        {
+            isFiring = GameInputManager.Instance.IsFireHeld;
+        }
         
-        // Handle aiming
         UpdateAimDirection();
         
-        // Auto fire or manual fire
         if (autoFire || isFiring)
         {
             TryShoot();
-        }
-    }
-    
-    private void HandleInput()
-    {
-        // Manual firing with Space or Left Mouse Button using New Input System
-        var keyboard = Keyboard.current;
-        var mouse = Mouse.current;
-        
-        isFiring = false;
-        
-        if (keyboard != null && keyboard.spaceKey.isPressed)
-        {
-            isFiring = true;
-        }
-        
-        if (mouse != null && mouse.leftButton.isPressed)
-        {
-            isFiring = true;
         }
     }
     
@@ -113,7 +120,6 @@ public class WeaponController : MonoBehaviour
             var mouse = Mouse.current;
             if (mouse != null)
             {
-                // Aim towards mouse position using New Input System
                 Vector3 mouseWorldPos = Camera.main.ScreenToWorldPoint(mouse.position.ReadValue());
                 mouseWorldPos.z = 0f;
                 
@@ -126,7 +132,6 @@ public class WeaponController : MonoBehaviour
         }
         else
         {
-            // Use default direction (or can be set to movement direction)
             aimDirection = defaultDirection;
         }
     }
@@ -138,14 +143,12 @@ public class WeaponController : MonoBehaviour
             return;
         }
         
-        // Update stats from player
         if (statsManager != null)
         {
             currentFireRate = statsManager.FireRate;
             currentDamage = statsManager.Damage;
         }
         
-        // Calculate actual fire rate with strategy cooldown modifier
         float effectiveFireRate = currentFireRate / currentStrategy.GetCooldownModifier();
         float timeBetweenShots = 1f / effectiveFireRate;
         
@@ -164,17 +167,14 @@ public class WeaponController : MonoBehaviour
             return;
         }
         
-        // Use calculated damage (could include critical hits from stats manager)
         float damage = currentDamage;
         if (statsManager != null)
         {
             damage = statsManager.CalculateDamageOutput();
         }
         
-        // Execute shooting strategy
         currentStrategy.Shoot(firePoint.position, aimDirection, damage, bulletPool);
         
-        // Trigger event
         OnShoot?.Invoke();
         
         Debug.Log($"Fired using {currentStrategy.GetStrategyName()}");
