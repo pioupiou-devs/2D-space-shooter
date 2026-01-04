@@ -5,11 +5,17 @@ using UnityEngine;
 /// </summary>
 public class CombatSystem : BaseStatCategory<CombatStatsConfig>
 {
-    // Properties with modifier support
-    public float Damage => CalculateStat(config.damage, "damage");
-    public float FireRate => CalculateStat(config.fireRate, "fireRate");
-    public float CriticalChance => Mathf.Clamp01(CalculateStat(config.criticalChance, "criticalChance"));
-    public float CriticalMultiplier => CalculateStat(config.criticalMultiplier, "criticalMultiplier");
+    // Default values when config is not assigned
+    private const float DefaultDamage = 10f;
+    private const float DefaultFireRate = 1f;
+    private const float DefaultCriticalChance = 0.05f;
+    private const float DefaultCriticalMultiplier = 2f;
+
+    // Properties with modifier support and null checks
+    public float Damage => config != null ? CalculateStat(config.damage, "damage") : DefaultDamage;
+    public float FireRate => config != null ? CalculateStat(config.fireRate, "fireRate") : DefaultFireRate;
+    public float CriticalChance => config != null ? Mathf.Clamp01(CalculateStat(config.criticalChance, "criticalChance")) : DefaultCriticalChance;
+    public float CriticalMultiplier => config != null ? CalculateStat(config.criticalMultiplier, "criticalMultiplier") : DefaultCriticalMultiplier;
     
     /// <summary>
     /// Calculate final damage output with potential critical hit

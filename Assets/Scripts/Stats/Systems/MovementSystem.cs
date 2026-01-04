@@ -5,15 +5,18 @@ using UnityEngine;
 /// </summary>
 public class MovementSystem : BaseStatCategory<MovementStatsConfig>
 {
-    // Properties with modifier support
-    public float MoveSpeed => Mathf.Clamp(
-        CalculateStat(config.moveSpeed, "moveSpeed"),
-        config.minMoveSpeed,
-        config.maxMoveSpeed
-    );
+    // Default values when config is not assigned
+    private const float DefaultMoveSpeed = 5f;
+    private const float DefaultMinMoveSpeed = 1f;
+    private const float DefaultMaxMoveSpeed = 20f;
+
+    // Properties with modifier support and null checks
+    public float MoveSpeed => config != null 
+        ? Mathf.Clamp(CalculateStat(config.moveSpeed, "moveSpeed"), config.minMoveSpeed, config.maxMoveSpeed)
+        : DefaultMoveSpeed;
     
-    public float MinMoveSpeed => config.minMoveSpeed;
-    public float MaxMoveSpeed => config.maxMoveSpeed;
+    public float MinMoveSpeed => config != null ? config.minMoveSpeed : DefaultMinMoveSpeed;
+    public float MaxMoveSpeed => config != null ? config.maxMoveSpeed : DefaultMaxMoveSpeed;
     
     /// <summary>
     /// Update movement controller speed if it exists

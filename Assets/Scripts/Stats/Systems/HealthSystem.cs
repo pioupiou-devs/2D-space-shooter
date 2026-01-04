@@ -6,6 +6,14 @@ using System;
 /// </summary>
 public class HealthSystem : BaseStatCategory<HealthStatsConfig>
 {
+    // Default values when config is not assigned
+    private const float DefaultMaxHealth = 100f;
+    private const float DefaultMaxShield = 50f;
+    private const int DefaultStartingLives = 3;
+    private const float DefaultShieldRegenDelay = 3f;
+    private const float DefaultShieldRegenRate = 5f;
+    private const float DefaultRespawnDelay = 2f;
+
     // Runtime state
     private float currentHealth;
     private float currentShield;
@@ -25,16 +33,21 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
     public event Action OnDeath;
     public event Action OnRespawn;
     
-    // Properties
+    // Properties with null checks
     public float CurrentHealth => currentHealth;
-    public float MaxHealth => CalculateStat(config.maxHealth, "maxHealth");
-    public float HealthPercentage => currentHealth / MaxHealth;
+    public float MaxHealth => config != null ? CalculateStat(config.maxHealth, "maxHealth") : DefaultMaxHealth;
+    public float HealthPercentage => MaxHealth > 0 ? currentHealth / MaxHealth : 0f;
     public float CurrentShield => currentShield;
-    public float MaxShield => CalculateStat(config.maxShield, "maxShield");
-    public float ShieldPercentage => currentShield / MaxShield;
+    public float MaxShield => config != null ? CalculateStat(config.maxShield, "maxShield") : DefaultMaxShield;
+    public float ShieldPercentage => MaxShield > 0 ? currentShield / MaxShield : 0f;
     public int CurrentLives => currentLives;
     public bool IsAlive => currentHealth > 0;
     public bool IsInvulnerable => isInvulnerable;
+
+    // Config accessors with defaults
+    private float ShieldRegenDelay => config != null ? config.shieldRegenDelay : DefaultShieldRegenDelay;
+    private float ShieldRegenRate => config != null ? config.shieldRegenRate : DefaultShieldRegenRate;
+    private float RespawnDelay => config != null ? config.respawnDelay : DefaultRespawnDelay;
     
     protected override void Awake()
     {
@@ -43,8 +56,8 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
         // Initialize
         currentHealth = MaxHealth;
         currentShield = MaxShield;
-        currentLives = config.startingLives;
-        isInvulnerable = config.startInvulnerable;
+        currentLives = config != null ? config.startingLives : DefaultStartingLives;
+        isInvulnerable = config != null && config.startInvulnerable;
     }
     
     private void Start()
@@ -62,9 +75,9 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
         {
             timeSinceLastDamage += Time.deltaTime;
             
-            if (timeSinceLastDamage >= config.shieldRegenDelay)
+            if (timeSinceLastDamage >= ShieldRegenDelay)
             {
-                float regenAmount = config.shieldRegenRate * Time.deltaTime;
+                float regenAmount = ShieldRegenRate * Time.deltaTime;
                 RegenerateShield(regenAmount);
             }
         }
@@ -170,7 +183,7 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
         
         if (currentLives > 0)
         {
-            Invoke(nameof(Respawn), config.respawnDelay);
+            Invoke(nameof(Respawn), RespawnDelay);
         }
         else
         {

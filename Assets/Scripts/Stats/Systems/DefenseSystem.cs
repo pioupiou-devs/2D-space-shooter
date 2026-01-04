@@ -5,13 +5,16 @@ using UnityEngine;
 /// </summary>
 public class DefenseSystem : BaseStatCategory<DefenseStatsConfig>
 {
-    // Properties with modifier support
-    public float Armor => CalculateStat(config.armor, "armor");
-    public float DamageReduction => Mathf.Clamp(
-        CalculateStat(config.damageReduction, "damageReduction"),
-        0f,
-        config.maxDamageReduction
-    );
+    // Default values when config is not assigned
+    private const float DefaultArmor = 0f;
+    private const float DefaultDamageReduction = 0f;
+    private const float DefaultMaxDamageReduction = 0.75f;
+
+    // Properties with modifier support and null checks
+    public float Armor => config != null ? CalculateStat(config.armor, "armor") : DefaultArmor;
+    public float DamageReduction => config != null 
+        ? Mathf.Clamp(CalculateStat(config.damageReduction, "damageReduction"), 0f, config.maxDamageReduction) 
+        : DefaultDamageReduction;
     
     /// <summary>
     /// Apply defense calculations to incoming damage

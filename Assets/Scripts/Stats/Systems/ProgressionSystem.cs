@@ -6,6 +6,14 @@ using System;
 /// </summary>
 public class ProgressionSystem : BaseStatCategory<ProgressionStatsConfig>
 {
+    // Default values when config is not assigned
+    private const int DefaultStartingLevel = 1;
+    private const float DefaultXPPerLevel = 100f;
+    private const float DefaultHealthPerLevel = 10f;
+    private const float DefaultDamagePerLevel = 2f;
+    private const float DefaultSpeedPerLevel = 0.1f;
+    private const bool DefaultRestoreOnLevelUp = true;
+
     private int currentLevel;
     private float currentXP;
     
@@ -13,16 +21,22 @@ public class ProgressionSystem : BaseStatCategory<ProgressionStatsConfig>
     public event Action<int> OnLevelUp;
     public event Action<float, float> OnXPChanged; // current, required
     
-    // Properties
+    // Properties with null checks
     public int CurrentLevel => currentLevel;
     public float CurrentXP => currentXP;
-    public float XPForNextLevel => config.xpPerLevel * currentLevel;
-    public float XPProgress => currentXP / XPForNextLevel;
+    public float XPForNextLevel => (config != null ? config.xpPerLevel : DefaultXPPerLevel) * currentLevel;
+    public float XPProgress => XPForNextLevel > 0 ? currentXP / XPForNextLevel : 0f;
+
+    // Config accessors with defaults
+    private float HealthPerLevel => config != null ? config.healthPerLevel : DefaultHealthPerLevel;
+    private float DamagePerLevel => config != null ? config.damagePerLevel : DefaultDamagePerLevel;
+    private float SpeedPerLevel => config != null ? config.speedPerLevel : DefaultSpeedPerLevel;
+    private bool RestoreOnLevelUp => config != null ? config.restoreOnLevelUp : DefaultRestoreOnLevelUp;
     
     protected override void Awake()
     {
         base.Awake();
-        currentLevel = config.startingLevel;
+        currentLevel = config != null ? config.startingLevel : DefaultStartingLevel;
         currentXP = 0f;
     }
     
@@ -65,26 +79,26 @@ public class ProgressionSystem : BaseStatCategory<ProgressionStatsConfig>
         var movementSystem = GetComponent<MovementSystem>();
         
         // Add permanent stat bonuses
-        if (healthSystem != null && config.healthPerLevel > 0)
+        if (healthSystem != null && HealthPerLevel > 0)
         {
-            var modifier = StatModifier.Flat(config.healthPerLevel, this);
+            var modifier = StatModifier.Flat(HealthPerLevel, this);
             healthSystem.AddModifier("maxHealth", modifier);
             
-            if (config.restoreOnLevelUp)
+            if (RestoreOnLevelUp)
             {
                 healthSystem.RestoreFullHealth();
             }
         }
         
-        if (combatSystem != null && config.damagePerLevel > 0)
+        if (combatSystem != null && DamagePerLevel > 0)
         {
-            var modifier = StatModifier.Flat(config.damagePerLevel, this);
+            var modifier = StatModifier.Flat(DamagePerLevel, this);
             combatSystem.AddModifier("damage", modifier);
         }
         
-        if (movementSystem != null && config.speedPerLevel > 0)
+        if (movementSystem != null && SpeedPerLevel > 0)
         {
-            var modifier = StatModifier.Flat(config.speedPerLevel, this);
+            var modifier = StatModifier.Flat(SpeedPerLevel, this);
             movementSystem.AddModifier("moveSpeed", modifier);
         }
     }
