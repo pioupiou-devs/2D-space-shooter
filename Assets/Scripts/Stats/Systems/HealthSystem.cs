@@ -15,7 +15,12 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
     
     // Events
     public event Action<float, float> OnHealthChanged; // current, max
+    public event Action<float> OnDamageTaken; // damage amount
+    public event Action<float> OnHealed; // heal amount
     public event Action<float, float> OnShieldChanged; // current, max
+    public event Action<float> OnShieldHit; // damage absorbed by shield
+    public event Action OnShieldBroken; // shield depleted
+    public event Action OnShieldRestored; // shield fully recharged
     public event Action<int> OnLivesChanged;
     public event Action OnDeath;
     public event Action OnRespawn;
@@ -74,6 +79,7 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
         
         timeSinceLastDamage = 0f;
         float remainingDamage = damageAmount;
+        bool shieldWasBroken = false;
         
         // Shield absorbs damage first
         if (currentShield > 0)
@@ -81,7 +87,15 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
             float shieldDamage = Mathf.Min(currentShield, remainingDamage);
             currentShield -= shieldDamage;
             remainingDamage -= shieldDamage;
+            
+            OnShieldHit?.Invoke(shieldDamage);
             OnShieldChanged?.Invoke(currentShield, MaxShield);
+            
+            if (currentShield <= 0)
+            {
+                shieldWasBroken = true;
+                OnShieldBroken?.Invoke();
+            }
         }
         
         // Apply remaining damage to health
@@ -89,6 +103,8 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
         {
             currentHealth -= remainingDamage;
             currentHealth = Mathf.Max(0, currentHealth);
+            
+            OnDamageTaken?.Invoke(remainingDamage);
             OnHealthChanged?.Invoke(currentHealth, MaxHealth);
             
             Debug.Log($"Took {remainingDamage} damage. Health: {currentHealth}/{MaxHealth}");
@@ -109,6 +125,8 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
         }
         
         currentHealth = Mathf.Min(currentHealth + healAmount, MaxHealth);
+        
+        OnHealed?.Invoke(healAmount);
         OnHealthChanged?.Invoke(currentHealth, MaxHealth);
         
         Debug.Log($"Healed {healAmount}. Health: {currentHealth}/{MaxHealth}");
@@ -116,8 +134,16 @@ public class HealthSystem : BaseStatCategory<HealthStatsConfig>
     
     public void RegenerateShield(float amount)
     {
+        float oldShield = currentShield;
         currentShield = Mathf.Min(currentShield + amount, MaxShield);
+        
         OnShieldChanged?.Invoke(currentShield, MaxShield);
+        
+        // Fire restored event when shield becomes full
+        if (oldShield < MaxShield && currentShield >= MaxShield)
+        {
+            OnShieldRestored?.Invoke();
+        }
     }
     
     public void RestoreFullHealth()
