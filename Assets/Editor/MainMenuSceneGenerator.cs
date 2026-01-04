@@ -12,7 +12,7 @@ using System.Reflection;
 /// </summary>
 public static class MainMenuSceneGenerator
 {
-    private const string ScenePath = "Assets/Scenes/MainMenuScene.unity";
+    private const string ScenePath = "Assets/Game/Scenes/MainMenuScene.unity";
 
     private static Type MainMenuManagerType => GetType("MainMenuManager");
     private static Type OptionsManagerType => GetType("OptionsManager");
@@ -39,7 +39,7 @@ public static class MainMenuSceneGenerator
             return;
         }
 
-        EnsureDirectoryExists("Assets/Scenes");
+        EnsureDirectoryExists("Assets/Game/Scenes");
 
         Scene newScene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 

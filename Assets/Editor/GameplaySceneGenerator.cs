@@ -13,10 +13,10 @@ using System.Reflection;
 /// </summary>
 public static class GameplaySceneGenerator
 {
-    private const string ScenePath = "Assets/Scenes/GameplayScene.unity";
-    private const string ConfigsPath = "Assets/Configs";
-    private const string PrefabsPath = "Assets/Prefabs";
-    private const string SpritesPath = "Assets/Sprites";
+    private const string ScenePath = "Assets/Game/Scenes/GameplayScene.unity";
+    private const string ConfigsPath = "Assets/Game/ScriptableObjects/Stats";
+    private const string PrefabsPath = "Assets/Game/Prefabs";
+    private const string SpritesPath = "Assets/Game/Art/Sprites";
 
     // Type references resolved at runtime
     private static Type HealthStatsConfigType => GetType("HealthStatsConfig");
@@ -263,7 +263,7 @@ public static class GameplaySceneGenerator
         GameObject hudCanvas = CreateHUDCanvas(player);
 
         // Save scene
-        EnsureDirectoryExists("Assets/Scenes");
+        EnsureDirectoryExists("Assets/Game/Scenes");
         EditorSceneManager.SaveScene(newScene, ScenePath);
 
         AssetDatabase.SaveAssets();
@@ -298,7 +298,7 @@ public static class GameplaySceneGenerator
         EnsureDirectoryExists(ConfigsPath);
         EnsureDirectoryExists(PrefabsPath);
         EnsureDirectoryExists(SpritesPath);
-        EnsureDirectoryExists("Assets/Scenes");
+        EnsureDirectoryExists("Assets/Game/Scenes");
     }
 
     private static void EnsureDirectoryExists(string path)

@@ -8,12 +8,12 @@ using System.IO;
 /// </summary>
 public static class InputActionsGenerator
 {
-    private const string AssetPath = "Assets/Settings/GameInputActions.inputactions";
+    private const string AssetPath = "Assets/Resources/GameInputActions.inputactions";
 
     [MenuItem("Tools/2D Space Shooter/Generate Input Actions")]
     public static void GenerateInputActions()
     {
-        EnsureDirectoryExists("Assets/Settings");
+        EnsureDirectoryExists("Assets/Resources");
 
         string json = CreateInputActionsJson();
         File.WriteAllText(AssetPath, json);
