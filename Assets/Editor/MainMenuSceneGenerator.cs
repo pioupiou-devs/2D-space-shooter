@@ -16,6 +16,7 @@ public static class MainMenuSceneGenerator
 
     private static Type MainMenuManagerType => GetType("MainMenuManager");
     private static Type OptionsManagerType => GetType("OptionsManager");
+    private static Type ConfirmDialogType => GetType("ConfirmDialog");
     private static Type TextMeshProUGUIType => GetType("TMPro.TextMeshProUGUI");
 
     private static Type GetType(string typeName)
@@ -50,32 +51,34 @@ public static class MainMenuSceneGenerator
         
         GameObject mainPanel = CreateMainMenuPanel(canvas.transform);
         GameObject optionsPanel = CreateOptionsPanel(canvas.transform);
-        GameObject quitPanel = CreateQuitConfirmPanel(canvas.transform);
+        GameObject confirmDialog = CreateConfirmDialog(canvas.transform);
 
         Component menuManager = canvas.AddComponent(MainMenuManagerType);
-        Component optionsManager = canvas.AddComponent(OptionsManagerType);
 
         SerializedObject menuSO = new SerializedObject(menuManager);
+        
+        // MainMenuManager specific fields
         menuSO.FindProperty("mainMenuPanel").objectReferenceValue = mainPanel;
-        menuSO.FindProperty("optionsPanel").objectReferenceValue = optionsPanel;
-        menuSO.FindProperty("quitConfirmPanel").objectReferenceValue = quitPanel;
         menuSO.FindProperty("gameplaySceneName").stringValue = "GameplayScene";
-
+        
+        // BaseMenuController inherited fields
+        menuSO.FindProperty("optionsPanel").objectReferenceValue = optionsPanel;
+        menuSO.FindProperty("confirmDialog").objectReferenceValue = confirmDialog.GetComponent(ConfirmDialogType);
+        
+        // Wire buttons
         Button playBtn = mainPanel.transform.Find("Button Container/Play Button")?.GetComponent<Button>();
         Button optionsBtn = mainPanel.transform.Find("Button Container/Options Button")?.GetComponent<Button>();
         Button quitBtn = mainPanel.transform.Find("Button Container/Quit Button")?.GetComponent<Button>();
         Button backBtn = optionsPanel.transform.Find("Back Button")?.GetComponent<Button>();
-        Button confirmBtn = quitPanel.transform.Find("Modal/Button Container/Confirm Button")?.GetComponent<Button>();
-        Button cancelBtn = quitPanel.transform.Find("Modal/Button Container/Cancel Button")?.GetComponent<Button>();
 
         menuSO.FindProperty("playButton").objectReferenceValue = playBtn;
         menuSO.FindProperty("optionsButton").objectReferenceValue = optionsBtn;
         menuSO.FindProperty("quitButton").objectReferenceValue = quitBtn;
         menuSO.FindProperty("optionsBackButton").objectReferenceValue = backBtn;
-        menuSO.FindProperty("quitConfirmButton").objectReferenceValue = confirmBtn;
-        menuSO.FindProperty("quitCancelButton").objectReferenceValue = cancelBtn;
         menuSO.ApplyModifiedPropertiesWithoutUndo();
 
+        // Add OptionsManager to options panel
+        Component optionsManager = optionsPanel.AddComponent(OptionsManagerType);
         WireOptionsManager(optionsManager, optionsPanel);
 
         EditorSceneManager.SaveScene(newScene, ScenePath);
@@ -87,7 +90,8 @@ public static class MainMenuSceneGenerator
 
     private static bool ValidateTypes()
     {
-        return MainMenuManagerType != null && OptionsManagerType != null && TextMeshProUGUIType != null;
+        return MainMenuManagerType != null && OptionsManagerType != null && 
+               ConfirmDialogType != null && TextMeshProUGUIType != null;
     }
 
     private static void EnsureDirectoryExists(string path)
@@ -618,34 +622,66 @@ public static class MainMenuSceneGenerator
         keySO.ApplyModifiedPropertiesWithoutUndo();
     }
 
-    private static GameObject CreateQuitConfirmPanel(Transform parent)
+    private static GameObject CreateConfirmDialog(Transform parent)
     {
-        GameObject overlay = CreateFullPanel("Quit Confirm Panel", parent);
-        overlay.SetActive(false);
+        GameObject dialog = CreateFullPanel("Confirm Dialog", parent);
+        dialog.SetActive(false);
         
-        Image overlayBg = overlay.AddComponent<Image>();
-        overlayBg.color = new Color(0, 0, 0, 0.7f);
+        Image bg = dialog.AddComponent<Image>();
+        bg.color = new Color(0, 0, 0, 0.8f);
 
         GameObject modal = new GameObject("Modal");
-        modal.transform.SetParent(overlay.transform);
+        modal.transform.SetParent(dialog.transform);
         RectTransform modalRect = modal.AddComponent<RectTransform>();
         modalRect.anchorMin = new Vector2(0.5f, 0.5f);
         modalRect.anchorMax = new Vector2(0.5f, 0.5f);
-        modalRect.sizeDelta = new Vector2(450, 220);
+        modalRect.sizeDelta = new Vector2(400, 200);
         modalRect.anchoredPosition = Vector2.zero;
 
         Image modalBg = modal.AddComponent<Image>();
-        modalBg.color = new Color(0.15f, 0.15f, 0.2f);
+        modalBg.color = new Color(0.1f, 0.1f, 0.1f);
 
-        CreateText("Quit Title", modal.transform, new Vector2(0.5f, 0.75f), "QUIT GAME?", 32, Color.white);
-        CreateText("Quit Message", modal.transform, new Vector2(0.5f, 0.5f), "Are you sure you want to quit?", 20, Color.gray);
+        // Create title text
+        GameObject titleObj = new GameObject("Title");
+        titleObj.transform.SetParent(modal.transform);
+        RectTransform titleRect = titleObj.AddComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0.5f, 0.75f);
+        titleRect.anchorMax = new Vector2(0.5f, 0.75f);
+        titleRect.sizeDelta = new Vector2(350, 40);
+        titleRect.anchoredPosition = Vector2.zero;
+        
+        Component titleText = titleObj.AddComponent(TextMeshProUGUIType);
+        SerializedObject titleSO = new SerializedObject(titleText);
+        titleSO.FindProperty("m_text").stringValue = "CONFIRM?";
+        titleSO.FindProperty("m_fontSize").floatValue = 28;
+        titleSO.FindProperty("m_textAlignment").intValue = 258;
+        titleSO.FindProperty("m_fontColor").colorValue = Color.white;
+        titleSO.ApplyModifiedPropertiesWithoutUndo();
 
+        // Create message text
+        GameObject msgObj = new GameObject("Message");
+        msgObj.transform.SetParent(modal.transform);
+        RectTransform msgRect = msgObj.AddComponent<RectTransform>();
+        msgRect.anchorMin = new Vector2(0.5f, 0.5f);
+        msgRect.anchorMax = new Vector2(0.5f, 0.5f);
+        msgRect.sizeDelta = new Vector2(350, 30);
+        msgRect.anchoredPosition = Vector2.zero;
+        
+        Component msgText = msgObj.AddComponent(TextMeshProUGUIType);
+        SerializedObject msgSO = new SerializedObject(msgText);
+        msgSO.FindProperty("m_text").stringValue = "Are you sure?";
+        msgSO.FindProperty("m_fontSize").floatValue = 18;
+        msgSO.FindProperty("m_textAlignment").intValue = 258;
+        msgSO.FindProperty("m_fontColor").colorValue = new Color(0.7f, 0.7f, 0.7f);
+        msgSO.ApplyModifiedPropertiesWithoutUndo();
+
+        // Button container
         GameObject btnContainer = new GameObject("Button Container");
         btnContainer.transform.SetParent(modal.transform);
         RectTransform btnRect = btnContainer.AddComponent<RectTransform>();
         btnRect.anchorMin = new Vector2(0.5f, 0.15f);
         btnRect.anchorMax = new Vector2(0.5f, 0.15f);
-        btnRect.sizeDelta = new Vector2(300, 50);
+        btnRect.sizeDelta = new Vector2(280, 50);
         btnRect.anchoredPosition = Vector2.zero;
 
         HorizontalLayoutGroup hLayout = btnContainer.AddComponent<HorizontalLayoutGroup>();
@@ -654,10 +690,19 @@ public static class MainMenuSceneGenerator
         hLayout.childControlWidth = false;
         hLayout.childControlHeight = false;
 
-        CreateButton("Confirm Button", btnContainer.transform, "YES", new Color(0.7f, 0.2f, 0.2f), 45, 120);
-        CreateButton("Cancel Button", btnContainer.transform, "NO", new Color(0.3f, 0.6f, 0.3f), 45, 120);
+        GameObject confirmBtn = CreateButton("Confirm Button", btnContainer.transform, "YES", new Color(0.7f, 0.2f, 0.2f), 45, 120);
+        GameObject cancelBtn = CreateButton("Cancel Button", btnContainer.transform, "NO", new Color(0.3f, 0.6f, 0.3f), 45, 120);
 
-        return overlay;
+        // Add ConfirmDialog component and wire it
+        Component confirmDialogComp = dialog.AddComponent(ConfirmDialogType);
+        SerializedObject dialogSO = new SerializedObject(confirmDialogComp);
+        dialogSO.FindProperty("titleText").objectReferenceValue = titleText;
+        dialogSO.FindProperty("messageText").objectReferenceValue = msgText;
+        dialogSO.FindProperty("confirmButton").objectReferenceValue = confirmBtn.GetComponent<Button>();
+        dialogSO.FindProperty("cancelButton").objectReferenceValue = cancelBtn.GetComponent<Button>();
+        dialogSO.ApplyModifiedPropertiesWithoutUndo();
+
+        return dialog;
     }
 
     private static GameObject CreateFullPanel(string name, Transform parent)

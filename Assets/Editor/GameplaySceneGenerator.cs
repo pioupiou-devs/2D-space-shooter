@@ -39,6 +39,11 @@ public static class GameplaySceneGenerator
     private static Type UIManagerType => GetType("UIManager");
     private static Type MinimalHUDControllerType => GetType("MinimalHUDController");
     private static Type TextMeshProUGUIType => GetType("TMPro.TextMeshProUGUI");
+    
+    // Pause menu types
+    private static Type PauseMenuManagerType => GetType("PauseMenuManager");
+    private static Type OptionsManagerType => GetType("OptionsManager");
+    private static Type ConfirmDialogType => GetType("ConfirmDialog");
 
     // Built-in sprite names
     private const string SquareSpriteName = "Square";
@@ -248,6 +253,9 @@ public static class GameplaySceneGenerator
         // Create Main Camera
         GameObject cameraObj = CreateMainCamera();
 
+        // Create EventSystem for UI
+        CreateEventSystem();
+
         // Create GameScreenManager
         GameObject gameScreenManager = CreateGameScreenManager(cameraObj.GetComponent<Camera>());
 
@@ -259,7 +267,7 @@ public static class GameplaySceneGenerator
             healthConfig, combatConfig, defenseConfig, movementConfig, progressionConfig,
             singleShotStrategy, bulletPool, gameScreenManager);
 
-        // Create HUD Canvas
+        // Create HUD Canvas with Pause Menu
         GameObject hudCanvas = CreateHUDCanvas(player);
 
         // Save scene
@@ -270,7 +278,7 @@ public static class GameplaySceneGenerator
         AssetDatabase.Refresh();
 
         Debug.Log($"Gameplay scene generated successfully at: {ScenePath}");
-        Debug.Log("Scene contains: Main Camera, GameScreenManager, BulletPool, Player (with all stat systems), HUD Canvas (with MinimalHUDController)");
+        Debug.Log("Scene contains: Main Camera, EventSystem, GameScreenManager, BulletPool, Player (with all stat systems), HUD Canvas (with MinimalHUDController and PauseMenuManager)");
     }
 
     private static bool ValidateTypes()
@@ -282,7 +290,8 @@ public static class GameplaySceneGenerator
             GameScreenManagerType, BulletPoolType, BulletType,
             HealthSystemType, CombatSystemType, DefenseSystemType, MovementSystemType, ProgressionSystemType,
             PlayerStatsManagerType, BoundedMovement2DType, WeaponControllerType,
-            UIManagerType, MinimalHUDControllerType, TextMeshProUGUIType
+            UIManagerType, MinimalHUDControllerType, TextMeshProUGUIType,
+            PauseMenuManagerType, OptionsManagerType, ConfirmDialogType
         };
 
         foreach (var type in requiredTypes)
@@ -392,6 +401,23 @@ public static class GameplaySceneGenerator
         cameraObj.transform.position = new Vector3(0f, 0f, -10f);
 
         return cameraObj;
+    }
+
+    private static void CreateEventSystem()
+    {
+        GameObject es = new GameObject("EventSystem");
+        es.AddComponent<UnityEngine.EventSystems.EventSystem>();
+        
+        // Use Input System UI Input Module (new Input System)
+        var inputSystemModuleType = Type.GetType("UnityEngine.InputSystem.UI.InputSystemUIInputModule, Unity.InputSystem");
+        if (inputSystemModuleType != null)
+        {
+            es.AddComponent(inputSystemModuleType);
+        }
+        else
+        {
+            es.AddComponent<UnityEngine.EventSystems.StandaloneInputModule>();
+        }
     }
 
     private static GameObject CreateGameScreenManager(Camera mainCamera)
@@ -609,8 +635,633 @@ public static class GameplaySceneGenerator
         // Create HUD Panel (child of canvas, so UIManager can discover it)
         GameObject hudPanel = CreateHUDPanel(canvasObj.transform);
 
+        // Create Pause Menu
+        CreatePauseMenu(canvasObj.transform);
+
         return canvasObj;
     }
+
+    #region Pause Menu Creation
+
+    private static void CreatePauseMenu(Transform parent)
+    {
+        // Create Pause Menu Panel (container for all pause UI)
+        GameObject pauseMenuPanel = new GameObject("Pause Menu Panel");
+        pauseMenuPanel.transform.SetParent(parent);
+        
+        RectTransform pauseRect = pauseMenuPanel.AddComponent<RectTransform>();
+        pauseRect.anchorMin = Vector2.zero;
+        pauseRect.anchorMax = Vector2.one;
+        pauseRect.offsetMin = Vector2.zero;
+        pauseRect.offsetMax = Vector2.zero;
+
+        // Add PauseMenuManager
+        Component pauseManager = pauseMenuPanel.AddComponent(PauseMenuManagerType);
+
+        // Create Overlay (semi-transparent background)
+        GameObject overlay = CreateOverlay(pauseMenuPanel.transform);
+
+        // Create Pause Modal
+        GameObject pauseModal = CreatePauseModal(pauseMenuPanel.transform);
+
+        // Create Options Panel (shared component)
+        GameObject optionsPanel = CreateOptionsPanel(pauseMenuPanel.transform);
+
+        // Create Confirm Dialog (shared component)
+        GameObject confirmDialog = CreateConfirmDialog(pauseMenuPanel.transform);
+
+        // Wire up PauseMenuManager
+        SerializedObject pauseSO = new SerializedObject(pauseManager);
+        pauseSO.FindProperty("pauseMenuPanel").objectReferenceValue = pauseModal;
+        pauseSO.FindProperty("overlayPanel").objectReferenceValue = overlay;
+        pauseSO.FindProperty("optionsPanel").objectReferenceValue = optionsPanel;
+        pauseSO.FindProperty("confirmDialog").objectReferenceValue = confirmDialog.GetComponent(ConfirmDialogType);
+        
+        // Wire buttons
+        Button resumeBtn = pauseModal.transform.Find("Button Container/Resume Button")?.GetComponent<Button>();
+        Button optionsBtn = pauseModal.transform.Find("Button Container/Options Button")?.GetComponent<Button>();
+        Button mainMenuBtn = pauseModal.transform.Find("Button Container/Main Menu Button")?.GetComponent<Button>();
+        Button quitBtn = pauseModal.transform.Find("Button Container/Quit Button")?.GetComponent<Button>();
+        Button optionsBackBtn = optionsPanel.transform.Find("Back Button")?.GetComponent<Button>();
+
+        pauseSO.FindProperty("resumeButton").objectReferenceValue = resumeBtn;
+        pauseSO.FindProperty("optionsButton").objectReferenceValue = optionsBtn;
+        pauseSO.FindProperty("mainMenuButton").objectReferenceValue = mainMenuBtn;
+        pauseSO.FindProperty("quitButton").objectReferenceValue = quitBtn;
+        pauseSO.FindProperty("optionsBackButton").objectReferenceValue = optionsBackBtn;
+        pauseSO.FindProperty("mainMenuSceneName").stringValue = "MainMenuScene";
+        pauseSO.ApplyModifiedPropertiesWithoutUndo();
+
+        // Start with pause menu hidden
+        overlay.SetActive(false);
+        pauseModal.SetActive(false);
+        optionsPanel.SetActive(false);
+        confirmDialog.SetActive(false);
+    }
+
+    private static GameObject CreateOverlay(Transform parent)
+    {
+        GameObject overlay = new GameObject("Overlay");
+        overlay.transform.SetParent(parent);
+
+        RectTransform rect = overlay.AddComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        Image img = overlay.AddComponent<Image>();
+        img.color = new Color(0f, 0f, 0f, 0.7f);
+
+        return overlay;
+    }
+
+    private static GameObject CreatePauseModal(Transform parent)
+    {
+        GameObject modal = new GameObject("Pause Modal");
+        modal.transform.SetParent(parent);
+
+        RectTransform rect = modal.AddComponent<RectTransform>();
+        rect.anchorMin = new Vector2(0.5f, 0.5f);
+        rect.anchorMax = new Vector2(0.5f, 0.5f);
+        rect.sizeDelta = new Vector2(400, 450);
+        rect.anchoredPosition = Vector2.zero;
+
+        Image bg = modal.AddComponent<Image>();
+        bg.color = new Color(0.08f, 0.08f, 0.13f, 0.98f);
+
+        // Title
+        GameObject title = new GameObject("Title");
+        title.transform.SetParent(modal.transform);
+        RectTransform titleRect = title.AddComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0.5f, 1f);
+        titleRect.anchorMax = new Vector2(0.5f, 1f);
+        titleRect.sizeDelta = new Vector2(300, 60);
+        titleRect.anchoredPosition = new Vector2(0, -50);
+
+        Component titleText = title.AddComponent(TextMeshProUGUIType);
+        SetTMPText(titleText, "PAUSED", 42, 1);
+        SetTMPColor(titleText, Color.cyan);
+
+        // Button container
+        GameObject btnContainer = new GameObject("Button Container");
+        btnContainer.transform.SetParent(modal.transform);
+        RectTransform btnRect = btnContainer.AddComponent<RectTransform>();
+        btnRect.anchorMin = new Vector2(0.5f, 0.5f);
+        btnRect.anchorMax = new Vector2(0.5f, 0.5f);
+        btnRect.sizeDelta = new Vector2(280, 280);
+        btnRect.anchoredPosition = new Vector2(0, -20);
+
+        VerticalLayoutGroup layout = btnContainer.AddComponent<VerticalLayoutGroup>();
+        layout.spacing = 15;
+        layout.childAlignment = TextAnchor.MiddleCenter;
+        layout.childControlWidth = true;
+        layout.childControlHeight = false;
+        layout.childForceExpandWidth = true;
+
+        // Buttons
+        CreateMenuButton("Resume Button", btnContainer.transform, "RESUME", new Color(0.2f, 0.7f, 0.2f), 55);
+        CreateMenuButton("Options Button", btnContainer.transform, "OPTIONS", new Color(0.3f, 0.5f, 0.8f), 55);
+        CreateMenuButton("Main Menu Button", btnContainer.transform, "MAIN MENU", new Color(0.8f, 0.5f, 0.2f), 55);
+        CreateMenuButton("Quit Button", btnContainer.transform, "QUIT", new Color(0.7f, 0.3f, 0.3f), 55);
+
+        // Hint text
+        GameObject hint = new GameObject("Hint");
+        hint.transform.SetParent(modal.transform);
+        RectTransform hintRect = hint.AddComponent<RectTransform>();
+        hintRect.anchorMin = new Vector2(0.5f, 0f);
+        hintRect.anchorMax = new Vector2(0.5f, 0f);
+        hintRect.sizeDelta = new Vector2(300, 30);
+        hintRect.anchoredPosition = new Vector2(0, 25);
+
+        Component hintText = hint.AddComponent(TextMeshProUGUIType);
+        SetTMPText(hintText, "[Press ESC to resume]", 16, 1);
+        SetTMPColor(hintText, new Color(0.5f, 0.5f, 0.5f));
+
+        return modal;
+    }
+
+    private static GameObject CreateOptionsPanel(Transform parent)
+    {
+        GameObject panel = new GameObject("Options Panel");
+        panel.transform.SetParent(parent);
+
+        RectTransform rect = panel.AddComponent<RectTransform>();
+        rect.anchorMin = Vector2.zero;
+        rect.anchorMax = Vector2.one;
+        rect.offsetMin = Vector2.zero;
+        rect.offsetMax = Vector2.zero;
+
+        Image bg = panel.AddComponent<Image>();
+        bg.color = new Color(0.1f, 0.1f, 0.15f, 0.98f);
+
+        // Add OptionsManager
+        Component optionsManager = panel.AddComponent(OptionsManagerType);
+
+        // Title
+        GameObject title = new GameObject("Title");
+        title.transform.SetParent(panel.transform);
+        RectTransform titleRect = title.AddComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0.5f, 1f);
+        titleRect.anchorMax = new Vector2(0.5f, 1f);
+        titleRect.sizeDelta = new Vector2(300, 60);
+        titleRect.anchoredPosition = new Vector2(0, -50);
+
+        Component titleText = title.AddComponent(TextMeshProUGUIType);
+        SetTMPText(titleText, "OPTIONS", 42, 1);
+        SetTMPColor(titleText, Color.white);
+
+        // Create scroll view for options content
+        GameObject scrollView = CreateOptionsScrollView(panel.transform);
+
+        // Back button
+        GameObject backBtn = CreateMenuButton("Back Button", panel.transform, "BACK", new Color(0.5f, 0.5f, 0.5f), 50);
+        RectTransform backRect = backBtn.GetComponent<RectTransform>();
+        backRect.anchorMin = new Vector2(0.5f, 0.05f);
+        backRect.anchorMax = new Vector2(0.5f, 0.05f);
+        backRect.sizeDelta = new Vector2(150, 50);
+        backRect.anchoredPosition = Vector2.zero;
+
+        // Wire OptionsManager
+        WireOptionsManager(optionsManager, scrollView);
+
+        return panel;
+    }
+
+    private static GameObject CreateOptionsScrollView(Transform parent)
+    {
+        GameObject scrollView = new GameObject("Scroll View");
+        scrollView.transform.SetParent(parent);
+        RectTransform scrollRect = scrollView.AddComponent<RectTransform>();
+        scrollRect.anchorMin = new Vector2(0.1f, 0.12f);
+        scrollRect.anchorMax = new Vector2(0.9f, 0.85f);
+        scrollRect.offsetMin = Vector2.zero;
+        scrollRect.offsetMax = Vector2.zero;
+
+        ScrollRect scroll = scrollView.AddComponent<ScrollRect>();
+        scroll.horizontal = false;
+        scroll.vertical = true;
+        scroll.movementType = ScrollRect.MovementType.Clamped;
+        scroll.scrollSensitivity = 30;
+
+        // Viewport
+        GameObject viewport = new GameObject("Viewport");
+        viewport.transform.SetParent(scrollView.transform);
+        RectTransform viewportRect = viewport.AddComponent<RectTransform>();
+        viewportRect.anchorMin = Vector2.zero;
+        viewportRect.anchorMax = Vector2.one;
+        viewportRect.offsetMin = Vector2.zero;
+        viewportRect.offsetMax = new Vector2(-15, 0);
+        
+        Image viewportImage = viewport.AddComponent<Image>();
+        viewportImage.color = new Color(0, 0, 0, 0.01f);
+        Mask mask = viewport.AddComponent<Mask>();
+        mask.showMaskGraphic = false;
+
+        // Content
+        GameObject content = new GameObject("Content");
+        content.transform.SetParent(viewport.transform);
+        RectTransform contentRect = content.AddComponent<RectTransform>();
+        contentRect.anchorMin = new Vector2(0, 1);
+        contentRect.anchorMax = new Vector2(1, 1);
+        contentRect.pivot = new Vector2(0.5f, 1);
+        contentRect.offsetMin = Vector2.zero;
+        contentRect.offsetMax = Vector2.zero;
+        contentRect.sizeDelta = new Vector2(0, 0);
+
+        // Add layout components
+        VerticalLayoutGroup vlg = content.AddComponent<VerticalLayoutGroup>();
+        vlg.spacing = 5;
+        vlg.padding = new RectOffset(20, 20, 10, 10);
+        vlg.childAlignment = TextAnchor.UpperCenter;
+        vlg.childControlWidth = true;
+        vlg.childControlHeight = false;
+        vlg.childForceExpandWidth = true;
+        vlg.childForceExpandHeight = false;
+
+        ContentSizeFitter csf = content.AddComponent<ContentSizeFitter>();
+        csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+        scroll.viewport = viewportRect;
+        scroll.content = contentRect;
+
+        // Audio Section
+        CreateSectionHeader("AUDIO", content.transform);
+        CreateSliderRow("Master Volume", content.transform);
+        CreateSliderRow("Music Volume", content.transform);
+        CreateSliderRow("SFX Volume", content.transform);
+        
+        CreateSpacer(content.transform, 15);
+
+        // Display Section
+        CreateSectionHeader("DISPLAY", content.transform);
+        CreateToggleRow("Fullscreen", content.transform);
+        CreateToggleRow("V-Sync", content.transform);
+
+        CreateSpacer(content.transform, 15);
+
+        // Controls Section
+        CreateSectionHeader("CONTROLS", content.transform);
+        CreateKeyBindRow("Move Up", "W", content.transform);
+        CreateKeyBindRow("Move Down", "S", content.transform);
+        CreateKeyBindRow("Move Left", "A", content.transform);
+        CreateKeyBindRow("Move Right", "D", content.transform);
+        CreateKeyBindRow("Fire", "Space", content.transform);
+        CreateKeyBindRow("Pause", "Escape", content.transform);
+
+        // Vertical Scrollbar
+        GameObject scrollbar = new GameObject("Scrollbar Vertical");
+        scrollbar.transform.SetParent(scrollView.transform);
+        RectTransform scrollbarRect = scrollbar.AddComponent<RectTransform>();
+        scrollbarRect.anchorMin = new Vector2(1, 0);
+        scrollbarRect.anchorMax = new Vector2(1, 1);
+        scrollbarRect.offsetMin = new Vector2(-12, 0);
+        scrollbarRect.offsetMax = Vector2.zero;
+        scrollbarRect.sizeDelta = new Vector2(12, 0);
+
+        Image scrollbarBg = scrollbar.AddComponent<Image>();
+        scrollbarBg.color = new Color(0.2f, 0.2f, 0.2f, 0.5f);
+
+        Scrollbar scrollbarComp = scrollbar.AddComponent<Scrollbar>();
+        scrollbarComp.direction = Scrollbar.Direction.BottomToTop;
+
+        GameObject slidingArea = new GameObject("Sliding Area");
+        slidingArea.transform.SetParent(scrollbar.transform);
+        RectTransform slidingRect = slidingArea.AddComponent<RectTransform>();
+        slidingRect.anchorMin = Vector2.zero;
+        slidingRect.anchorMax = Vector2.one;
+        slidingRect.offsetMin = Vector2.zero;
+        slidingRect.offsetMax = Vector2.zero;
+
+        GameObject handle = new GameObject("Handle");
+        handle.transform.SetParent(slidingArea.transform);
+        RectTransform handleRect = handle.AddComponent<RectTransform>();
+        handleRect.anchorMin = Vector2.zero;
+        handleRect.anchorMax = new Vector2(1, 1);
+        handleRect.offsetMin = Vector2.zero;
+        handleRect.offsetMax = Vector2.zero;
+        Image handleImage = handle.AddComponent<Image>();
+        handleImage.color = Color.cyan;
+
+        scrollbarComp.handleRect = handleRect;
+        scrollbarComp.targetGraphic = handleImage;
+        scroll.verticalScrollbar = scrollbarComp;
+        scroll.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHideAndExpandViewport;
+
+        return scrollView;
+    }
+
+    private static void CreateSectionHeader(string title, Transform parent)
+    {
+        GameObject header = new GameObject($"{title} Header");
+        header.transform.SetParent(parent);
+        RectTransform headerRect = header.AddComponent<RectTransform>();
+        headerRect.sizeDelta = new Vector2(0, 35);
+
+        LayoutElement le = header.AddComponent<LayoutElement>();
+        le.minHeight = 35;
+        le.preferredHeight = 35;
+
+        Component headerTmp = header.AddComponent(TextMeshProUGUIType);
+        SetTMPText(headerTmp, title, 22, 0);
+        SetTMPColor(headerTmp, Color.cyan);
+    }
+
+    private static void CreateSpacer(Transform parent, float height)
+    {
+        GameObject spacer = new GameObject("Spacer");
+        spacer.transform.SetParent(parent);
+        RectTransform spacerRect = spacer.AddComponent<RectTransform>();
+        spacerRect.sizeDelta = new Vector2(0, height);
+
+        LayoutElement le = spacer.AddComponent<LayoutElement>();
+        le.minHeight = height;
+        le.preferredHeight = height;
+    }
+
+    private static void CreateSliderRow(string label, Transform parent)
+    {
+        float rowHeight = 50;
+
+        GameObject row = new GameObject($"{label} Row");
+        row.transform.SetParent(parent);
+        RectTransform rowRect = row.AddComponent<RectTransform>();
+        rowRect.sizeDelta = new Vector2(0, rowHeight);
+
+        LayoutElement le = row.AddComponent<LayoutElement>();
+        le.minHeight = rowHeight;
+        le.preferredHeight = rowHeight;
+
+        // Label
+        GameObject labelObj = new GameObject("Label");
+        labelObj.transform.SetParent(row.transform);
+        RectTransform labelRect = labelObj.AddComponent<RectTransform>();
+        labelRect.anchorMin = new Vector2(0, 0);
+        labelRect.anchorMax = new Vector2(0.3f, 1);
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        Component labelTmp = labelObj.AddComponent(TextMeshProUGUIType);
+        SetTMPText(labelTmp, label, 18, 0);
+        SetTMPColor(labelTmp, Color.white);
+
+        // Slider
+        GameObject sliderObj = new GameObject("Slider");
+        sliderObj.transform.SetParent(row.transform);
+        RectTransform sliderRect = sliderObj.AddComponent<RectTransform>();
+        sliderRect.anchorMin = new Vector2(0.32f, 0.2f);
+        sliderRect.anchorMax = new Vector2(0.82f, 0.8f);
+        sliderRect.offsetMin = Vector2.zero;
+        sliderRect.offsetMax = Vector2.zero;
+
+        Slider slider = sliderObj.AddComponent<Slider>();
+        slider.minValue = 0;
+        slider.maxValue = 1;
+        slider.value = 1;
+
+        // Slider Background
+        GameObject sliderBg = new GameObject("Background");
+        sliderBg.transform.SetParent(sliderObj.transform);
+        RectTransform bgRect = sliderBg.AddComponent<RectTransform>();
+        bgRect.anchorMin = Vector2.zero;
+        bgRect.anchorMax = Vector2.one;
+        bgRect.offsetMin = Vector2.zero;
+        bgRect.offsetMax = Vector2.zero;
+        Image bgImage = sliderBg.AddComponent<Image>();
+        bgImage.color = new Color(0.2f, 0.2f, 0.2f);
+
+        // Fill Area
+        GameObject fillArea = new GameObject("Fill Area");
+        fillArea.transform.SetParent(sliderObj.transform);
+        RectTransform fillAreaRect = fillArea.AddComponent<RectTransform>();
+        fillAreaRect.anchorMin = new Vector2(0, 0.25f);
+        fillAreaRect.anchorMax = new Vector2(1, 0.75f);
+        fillAreaRect.offsetMin = new Vector2(5, 0);
+        fillAreaRect.offsetMax = new Vector2(-5, 0);
+
+        GameObject fill = new GameObject("Fill");
+        fill.transform.SetParent(fillArea.transform);
+        RectTransform fillRect = fill.AddComponent<RectTransform>();
+        fillRect.anchorMin = Vector2.zero;
+        fillRect.anchorMax = new Vector2(0, 1);
+        fillRect.offsetMin = Vector2.zero;
+        fillRect.offsetMax = Vector2.zero;
+        Image fillImage = fill.AddComponent<Image>();
+        fillImage.color = Color.cyan;
+        slider.fillRect = fillRect;
+
+        // Handle
+        GameObject handleArea = new GameObject("Handle Slide Area");
+        handleArea.transform.SetParent(sliderObj.transform);
+        RectTransform handleAreaRect = handleArea.AddComponent<RectTransform>();
+        handleAreaRect.anchorMin = Vector2.zero;
+        handleAreaRect.anchorMax = Vector2.one;
+        handleAreaRect.offsetMin = new Vector2(10, 0);
+        handleAreaRect.offsetMax = new Vector2(-10, 0);
+
+        GameObject handle = new GameObject("Handle");
+        handle.transform.SetParent(handleArea.transform);
+        RectTransform handleRect = handle.AddComponent<RectTransform>();
+        handleRect.anchorMin = new Vector2(0, 0);
+        handleRect.anchorMax = new Vector2(0, 1);
+        handleRect.sizeDelta = new Vector2(20, 0);
+        Image handleImage = handle.AddComponent<Image>();
+        handleImage.color = Color.white;
+        slider.handleRect = handleRect;
+        slider.targetGraphic = handleImage;
+
+        // Value text
+        GameObject valueObj = new GameObject("Value");
+        valueObj.transform.SetParent(row.transform);
+        RectTransform valueRect = valueObj.AddComponent<RectTransform>();
+        valueRect.anchorMin = new Vector2(0.85f, 0);
+        valueRect.anchorMax = new Vector2(1, 1);
+        valueRect.offsetMin = Vector2.zero;
+        valueRect.offsetMax = Vector2.zero;
+
+        Component valueTmp = valueObj.AddComponent(TextMeshProUGUIType);
+        SetTMPText(valueTmp, "100%", 16, 1);
+        SetTMPColor(valueTmp, Color.white);
+    }
+
+    private static void CreateToggleRow(string label, Transform parent)
+    {
+        float rowHeight = 45;
+
+        GameObject row = new GameObject($"{label} Row");
+        row.transform.SetParent(parent);
+        RectTransform rowRect = row.AddComponent<RectTransform>();
+        rowRect.sizeDelta = new Vector2(0, rowHeight);
+
+        LayoutElement le = row.AddComponent<LayoutElement>();
+        le.minHeight = rowHeight;
+        le.preferredHeight = rowHeight;
+
+        // Label
+        GameObject labelObj = new GameObject("Label");
+        labelObj.transform.SetParent(row.transform);
+        RectTransform labelRect = labelObj.AddComponent<RectTransform>();
+        labelRect.anchorMin = new Vector2(0, 0);
+        labelRect.anchorMax = new Vector2(0.7f, 1);
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        Component labelTmp = labelObj.AddComponent(TextMeshProUGUIType);
+        SetTMPText(labelTmp, label, 18, 0);
+        SetTMPColor(labelTmp, Color.white);
+
+        // Toggle
+        GameObject toggleObj = new GameObject("Toggle");
+        toggleObj.transform.SetParent(row.transform);
+        RectTransform toggleRect = toggleObj.AddComponent<RectTransform>();
+        toggleRect.anchorMin = new Vector2(0.75f, 0.1f);
+        toggleRect.anchorMax = new Vector2(0.85f, 0.9f);
+        toggleRect.offsetMin = Vector2.zero;
+        toggleRect.offsetMax = Vector2.zero;
+
+        Toggle toggle = toggleObj.AddComponent<Toggle>();
+
+        GameObject background = new GameObject("Background");
+        background.transform.SetParent(toggleObj.transform);
+        RectTransform bgRect = background.AddComponent<RectTransform>();
+        bgRect.anchorMin = Vector2.zero;
+        bgRect.anchorMax = Vector2.one;
+        bgRect.offsetMin = Vector2.zero;
+        bgRect.offsetMax = Vector2.zero;
+        Image bgImage = background.AddComponent<Image>();
+        bgImage.color = new Color(0.25f, 0.25f, 0.25f);
+
+        GameObject checkmark = new GameObject("Checkmark");
+        checkmark.transform.SetParent(background.transform);
+        RectTransform checkRect = checkmark.AddComponent<RectTransform>();
+        checkRect.anchorMin = new Vector2(0.15f, 0.15f);
+        checkRect.anchorMax = new Vector2(0.85f, 0.85f);
+        checkRect.offsetMin = Vector2.zero;
+        checkRect.offsetMax = Vector2.zero;
+        Image checkImage = checkmark.AddComponent<Image>();
+        checkImage.color = Color.cyan;
+
+        toggle.targetGraphic = bgImage;
+        toggle.graphic = checkImage;
+        toggle.isOn = true;
+    }
+
+    private static void CreateKeyBindRow(string label, string defaultKey, Transform parent)
+    {
+        float rowHeight = 40;
+
+        GameObject row = new GameObject($"{label} Row");
+        row.transform.SetParent(parent);
+        RectTransform rowRect = row.AddComponent<RectTransform>();
+        rowRect.sizeDelta = new Vector2(0, rowHeight);
+
+        LayoutElement le = row.AddComponent<LayoutElement>();
+        le.minHeight = rowHeight;
+        le.preferredHeight = rowHeight;
+
+        // Label
+        GameObject labelObj = new GameObject("Label");
+        labelObj.transform.SetParent(row.transform);
+        RectTransform labelRect = labelObj.AddComponent<RectTransform>();
+        labelRect.anchorMin = new Vector2(0, 0);
+        labelRect.anchorMax = new Vector2(0.5f, 1);
+        labelRect.offsetMin = Vector2.zero;
+        labelRect.offsetMax = Vector2.zero;
+
+        Component labelTmp = labelObj.AddComponent(TextMeshProUGUIType);
+        SetTMPText(labelTmp, label, 16, 0);
+        SetTMPColor(labelTmp, Color.white);
+
+        // Key Button
+        GameObject keyBtn = new GameObject("KeyButton");
+        keyBtn.transform.SetParent(row.transform);
+        RectTransform keyRect = keyBtn.AddComponent<RectTransform>();
+        keyRect.anchorMin = new Vector2(0.6f, 0.1f);
+        keyRect.anchorMax = new Vector2(0.9f, 0.9f);
+        keyRect.offsetMin = Vector2.zero;
+        keyRect.offsetMax = Vector2.zero;
+
+        Image btnBg = keyBtn.AddComponent<Image>();
+        btnBg.color = new Color(0.25f, 0.25f, 0.3f);
+
+        Button btn = keyBtn.AddComponent<Button>();
+        ColorBlock colors = btn.colors;
+        colors.highlightedColor = new Color(0.35f, 0.35f, 0.4f);
+        colors.pressedColor = new Color(0.2f, 0.2f, 0.25f);
+        btn.colors = colors;
+
+        GameObject keyTextObj = new GameObject("KeyText");
+        keyTextObj.transform.SetParent(keyBtn.transform);
+        RectTransform keyTextRect = keyTextObj.AddComponent<RectTransform>();
+        keyTextRect.anchorMin = Vector2.zero;
+        keyTextRect.anchorMax = Vector2.one;
+        keyTextRect.offsetMin = Vector2.zero;
+        keyTextRect.offsetMax = Vector2.zero;
+
+        Component keyTmp = keyTextObj.AddComponent(TextMeshProUGUIType);
+        SetTMPText(keyTmp, defaultKey, 14, 1);
+        SetTMPColor(keyTmp, Color.white);
+    }
+
+    private static void WireOptionsManager(Component manager, GameObject scrollView)
+    {
+        SerializedObject so = new SerializedObject(manager);
+        
+        Transform content = scrollView.transform.Find("Viewport/Content");
+        if (content == null)
+        {
+            Debug.LogWarning("Could not find scroll view content for OptionsManager wiring");
+            return;
+        }
+
+        // Wire sliders
+        var masterRow = content.Find("Master Volume Row");
+        var musicRow = content.Find("Music Volume Row");
+        var sfxRow = content.Find("SFX Volume Row");
+
+        if (masterRow != null) 
+            so.FindProperty("masterVolumeSlider").objectReferenceValue = masterRow.Find("Slider")?.GetComponent<Slider>();
+        if (musicRow != null) 
+            so.FindProperty("musicVolumeSlider").objectReferenceValue = musicRow.Find("Slider")?.GetComponent<Slider>();
+        if (sfxRow != null) 
+            so.FindProperty("sfxVolumeSlider").objectReferenceValue = sfxRow.Find("Slider")?.GetComponent<Slider>();
+
+        // Wire toggles
+        var fullscreenRow = content.Find("Fullscreen Row");
+        var vsyncRow = content.Find("V-Sync Row");
+
+        if (fullscreenRow != null) 
+            so.FindProperty("fullscreenToggle").objectReferenceValue = fullscreenRow.Find("Toggle")?.GetComponent<Toggle>();
+        if (vsyncRow != null) 
+            so.FindProperty("vsyncToggle").objectReferenceValue = vsyncRow.Find("Toggle")?.GetComponent<Toggle>();
+
+        // Wire key binding buttons
+        var moveUpRow = content.Find("Move Up Row");
+        var moveDownRow = content.Find("Move Down Row");
+        var moveLeftRow = content.Find("Move Left Row");
+        var moveRightRow = content.Find("Move Right Row");
+        var fireRow = content.Find("Fire Row");
+        var pauseRow = content.Find("Pause Row");
+
+        if (moveUpRow != null)
+            so.FindProperty("moveUpButton").objectReferenceValue = moveUpRow.Find("KeyButton")?.GetComponent<Button>();
+        if (moveDownRow != null)
+            so.FindProperty("moveDownButton").objectReferenceValue = moveDownRow.Find("KeyButton")?.GetComponent<Button>();
+        if (moveLeftRow != null)
+            so.FindProperty("moveLeftButton").objectReferenceValue = moveLeftRow.Find("KeyButton")?.GetComponent<Button>();
+        if (moveRightRow != null)
+            so.FindProperty("moveRightButton").objectReferenceValue = moveRightRow.Find("KeyButton")?.GetComponent<Button>();
+        if (fireRow != null)
+            so.FindProperty("fireButton").objectReferenceValue = fireRow.Find("KeyButton")?.GetComponent<Button>();
+        if (pauseRow != null)
+            so.FindProperty("pauseButton").objectReferenceValue = pauseRow.Find("KeyButton")?.GetComponent<Button>();
+
+        so.ApplyModifiedPropertiesWithoutUndo();
+    }
+    #endregion
+
+    #region HUD Creation
 
     private static GameObject CreateHUDPanel(Transform parent)
     {
@@ -623,6 +1274,9 @@ public static class GameplaySceneGenerator
         hudRect.anchorMax = Vector2.one;
         hudRect.offsetMin = Vector2.zero;
         hudRect.offsetMax = Vector2.zero;
+
+        // Add CanvasGroup for dimming when paused
+        hudPanel.AddComponent<CanvasGroup>();
 
         // Add MinimalHUDController
         Component hudController = hudPanel.AddComponent(MinimalHUDControllerType);
@@ -713,4 +1367,133 @@ public static class GameplaySceneGenerator
 
         return textObj;
     }
+
+    private static GameObject CreateConfirmDialog(Transform parent)
+    {
+        GameObject dialog = new GameObject("Confirm Dialog");
+        dialog.transform.SetParent(parent);
+
+        RectTransform dialogRect = dialog.AddComponent<RectTransform>();
+        dialogRect.anchorMin = Vector2.zero;
+        dialogRect.anchorMax = Vector2.one;
+        dialogRect.offsetMin = Vector2.zero;
+        dialogRect.offsetMax = Vector2.zero;
+
+        Image overlayImg = dialog.AddComponent<Image>();
+        overlayImg.color = new Color(0f, 0f, 0f, 0.7f);
+
+        GameObject modal = new GameObject("Modal");
+        modal.transform.SetParent(dialog.transform);
+        RectTransform modalRect = modal.AddComponent<RectTransform>();
+        modalRect.anchorMin = new Vector2(0.5f, 0.5f);
+        modalRect.anchorMax = new Vector2(0.5f, 0.5f);
+        modalRect.sizeDelta = new Vector2(450, 220);
+        modalRect.anchoredPosition = Vector2.zero;
+
+        Image modalBg = modal.AddComponent<Image>();
+        modalBg.color = new Color(0.15f, 0.15f, 0.2f);
+
+        // Title
+        GameObject title = new GameObject("Title");
+        title.transform.SetParent(modal.transform);
+        RectTransform titleRect = title.AddComponent<RectTransform>();
+        titleRect.anchorMin = new Vector2(0.5f, 1f);
+        titleRect.anchorMax = new Vector2(0.5f, 1f);
+        titleRect.sizeDelta = new Vector2(400, 50);
+        titleRect.anchoredPosition = new Vector2(0, -40);
+
+        Component titleText = title.AddComponent(TextMeshProUGUIType);
+        SetTMPText(titleText, "CONFIRM?", 32, 1);
+        SetTMPColor(titleText, Color.white);
+
+        // Message
+        GameObject message = new GameObject("Message");
+        message.transform.SetParent(modal.transform);
+        RectTransform msgRect = message.AddComponent<RectTransform>();
+        msgRect.anchorMin = new Vector2(0.5f, 0.5f);
+        msgRect.anchorMax = new Vector2(0.5f, 0.5f);
+        msgRect.sizeDelta = new Vector2(400, 40);
+        msgRect.anchoredPosition = new Vector2(0, 10);
+
+        Component msgText = message.AddComponent(TextMeshProUGUIType);
+        SetTMPText(msgText, "Are you sure?", 20, 1);
+        SetTMPColor(msgText, new Color(0.7f, 0.7f, 0.7f));
+
+        // Button container
+        GameObject btnContainer = new GameObject("Button Container");
+        btnContainer.transform.SetParent(modal.transform);
+        RectTransform btnRect = btnContainer.AddComponent<RectTransform>();
+        btnRect.anchorMin = new Vector2(0.5f, 0f);
+        btnRect.anchorMax = new Vector2(0.5f, 0f);
+        btnRect.sizeDelta = new Vector2(300, 50);
+        btnRect.anchoredPosition = new Vector2(0, 40);
+
+        HorizontalLayoutGroup hLayout = btnContainer.AddComponent<HorizontalLayoutGroup>();
+        hLayout.spacing = 20;
+        hLayout.childAlignment = TextAnchor.MiddleCenter;
+        hLayout.childControlWidth = false;
+        hLayout.childControlHeight = false;
+
+        CreateMenuButton("Confirm Button", btnContainer.transform, "YES", new Color(0.7f, 0.2f, 0.2f), 45, 120);
+        CreateMenuButton("Cancel Button", btnContainer.transform, "NO", new Color(0.3f, 0.6f, 0.3f), 45, 120);
+
+        // Add ConfirmDialog component
+        Component confirmComp = dialog.AddComponent(ConfirmDialogType);
+        SerializedObject confirmSO = new SerializedObject(confirmComp);
+        confirmSO.FindProperty("titleText").objectReferenceValue = titleText;
+        confirmSO.FindProperty("messageText").objectReferenceValue = msgText;
+        confirmSO.FindProperty("confirmButton").objectReferenceValue = btnContainer.transform.Find("Confirm Button")?.GetComponent<Button>();
+        confirmSO.FindProperty("cancelButton").objectReferenceValue = btnContainer.transform.Find("Cancel Button")?.GetComponent<Button>();
+        confirmSO.ApplyModifiedPropertiesWithoutUndo();
+
+        return dialog;
+    }
+
+    private static GameObject CreateMenuButton(string name, Transform parent, string text, Color color, float height, float width = 250)
+    {
+        GameObject btn = new GameObject(name);
+        btn.transform.SetParent(parent);
+
+        RectTransform rect = btn.AddComponent<RectTransform>();
+        rect.sizeDelta = new Vector2(width, height);
+
+        Image img = btn.AddComponent<Image>();
+        img.color = color;
+
+        Button button = btn.AddComponent<Button>();
+        ColorBlock colors = button.colors;
+        colors.highlightedColor = color * 1.2f;
+        colors.pressedColor = color * 0.8f;
+        button.colors = colors;
+
+        GameObject textObj = new GameObject("Text");
+        textObj.transform.SetParent(btn.transform);
+
+        RectTransform textRect = textObj.AddComponent<RectTransform>();
+        textRect.anchorMin = Vector2.zero;
+        textRect.anchorMax = Vector2.one;
+        textRect.offsetMin = Vector2.zero;
+        textRect.offsetMax = Vector2.zero;
+
+        Component tmp = textObj.AddComponent(TextMeshProUGUIType);
+        SetTMPText(tmp, text, 22, 1);
+        SetTMPColor(tmp, Color.white);
+
+        return btn;
+    }
+
+    private static void SetTMPColor(Component textComponent, Color color)
+    {
+        if (textComponent == null) return;
+
+        SerializedObject so = new SerializedObject(textComponent);
+        SerializedProperty colorProp = so.FindProperty("m_fontColor");
+        if (colorProp != null)
+        {
+            colorProp.colorValue = color;
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+    }
+
+    #endregion
 }
