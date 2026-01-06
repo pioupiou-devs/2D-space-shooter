@@ -1,0 +1,1244 @@
+# ?? Audio Synthesis Reference
+
+## Overview
+
+This document provides detailed **C# code references** for the procedural audio synthesis system. All audio is generated in real-time using DSP algorithms - no audio files are used.
+
+---
+
+## ?? Core Synthesis Architecture
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?                    AUDIO SYNTHESIS PIPELINE                                 ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  OnAudioFilterRead(float[] data, int channels)                              ?
+?  ?? Called by Unity audio thread (not main thread!)                         ?
+?  ?? Buffer size: typically 1024 samples                                     ?
+?  ?? Sample rate: 44100 or 48000 Hz                                          ?
+?  ?? Must complete within buffer duration (~21ms at 48kHz)                   ?
+?                                                                             ?
+?  THREAD SAFETY:                                                             ?
+?  ?? Cannot use UnityEngine objects                                          ?
+?  ?? Use atomic operations or lock-free structures                           ?
+?  ?? Copy parameters at buffer start                                         ?
+?  ?? No allocations during processing                                        ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+## ?? Basic Waveform Generators
+
+### Oscillator Base Class
+
+```csharp
+/// <summary>
+/// Base class for all audio oscillators.
+/// Maintains phase accumulator for continuous waveforms.
+/// </summary>
+public class Oscillator
+{
+    // Phase accumulator (0.0 to 1.0)
+    private double _phase;
+    
+    // Current frequency in Hz
+    public double Frequency { get; set; }
+    
+    // Sample rate (set once from audio settings)
+    private readonly double _sampleRate;
+    
+    public Oscillator(double sampleRate)
+    {
+        _sampleRate = sampleRate;
+        _phase = 0.0;
+    }
+    
+    /// <summary>
+    /// Advance phase and return the phase value.
+    /// Call once per sample.
+    /// </summary>
+    protected double NextPhase()
+    {
+        double result = _phase;
+        _phase += Frequency / _sampleRate;
+        
+        // Wrap phase to avoid precision loss
+        if (_phase >= 1.0)
+            _phase -= 1.0;
+            
+        return result;
+    }
+    
+    /// <summary>
+    /// Reset phase (for hard sync effects)
+    /// </summary>
+    public void ResetPhase()
+    {
+        _phase = 0.0;
+    }
+}
+```
+
+---
+
+### Sine Wave Oscillator
+
+```csharp
+/// <summary>
+/// Pure sine wave oscillator.
+/// Smoothest sound, fundamental tone.
+/// </summary>
+public class SineOscillator : Oscillator
+{
+    // Pre-calculated constant
+    private const double TwoPi = 2.0 * Math.PI;
+    
+    public SineOscillator(double sampleRate) : base(sampleRate) { }
+    
+    public double NextSample()
+    {
+        double phase = NextPhase();
+        return Math.Sin(phase * TwoPi);
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  SINE WAVE                                                                  ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?            ????                              ????                           ?
+?          ??    ??                          ??    ??                         ?
+?        ??        ??                      ??        ??                       ?
+?  ?????????????????????????????????????????????????????????????????          ?
+?                      ??              ??                ??                   ?
+?                        ??          ??                    ??                 ?
+?                          ??????????                        ????             ?
+?                                                                             ?
+?  USES: Sub-bass, pure tones, LFO, pad sounds                                ?
+?  FORMULA: sin(2? × phase)                                                   ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+### Square Wave Oscillator
+
+```csharp
+/// <summary>
+/// Square wave oscillator with variable pulse width.
+/// Harsh, retro sound rich in odd harmonics.
+/// </summary>
+public class SquareOscillator : Oscillator
+{
+    // Pulse width (0.0 to 1.0, default 0.5 = 50% duty cycle)
+    public double PulseWidth { get; set; } = 0.5;
+    
+    public SquareOscillator(double sampleRate) : base(sampleRate) { }
+    
+    public double NextSample()
+    {
+        double phase = NextPhase();
+        return phase < PulseWidth ? 1.0 : -1.0;
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  SQUARE WAVE (50% duty)                                                     ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  ????????????????                      ????????????????                     ?
+?  ?              ?                      ?              ?                     ?
+?  ?              ?                      ?              ?                     ?
+?  ???????????????????????????????????????????????????????????????????        ?
+?                 ?              ?                      ?                     ?
+?                 ?              ?                      ?                     ?
+?                 ????????????????                      ????????????          ?
+?                                                                             ?
+?  USES: Retro game sounds, aggressive leads, chiptune                        ?
+?  HARMONICS: Fundamental + odd harmonics (3rd, 5th, 7th...)                  ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+### Sawtooth Wave Oscillator
+
+```csharp
+/// <summary>
+/// Sawtooth wave oscillator.
+/// Rich harmonic content, buzzy sound.
+/// </summary>
+public class SawtoothOscillator : Oscillator
+{
+    public SawtoothOscillator(double sampleRate) : base(sampleRate) { }
+    
+    public double NextSample()
+    {
+        double phase = NextPhase();
+        // Convert phase (0-1) to sawtooth (-1 to +1)
+        return 2.0 * phase - 1.0;
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  SAWTOOTH WAVE                                                              ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?        ??                      ??                      ??                   ?
+?      ????                    ????                    ????                   ?
+?    ??????                  ??????                  ??????                   ?
+?  ???????????????????????????????????????????????????????????????            ?
+???????????              ??????????              ??????????                   ?
+?  ????????            ????????                ????????                       ?
+?    ??????          ??????                  ??????                           ?
+?                                                                             ?
+?  USES: Bass, leads, pads (rich harmonic content)                            ?
+?  HARMONICS: All harmonics present (fundamental + 2nd + 3rd + ...)           ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+### Triangle Wave Oscillator
+
+```csharp
+/// <summary>
+/// Triangle wave oscillator.
+/// Mellow, flute-like sound.
+/// </summary>
+public class TriangleOscillator : Oscillator
+{
+    public TriangleOscillator(double sampleRate) : base(sampleRate) { }
+    
+    public double NextSample()
+    {
+        double phase = NextPhase();
+        // Convert phase (0-1) to triangle (-1 to +1)
+        return 2.0 * Math.Abs(2.0 * phase - 1.0) - 1.0;
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  TRIANGLE WAVE                                                              ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?          ??                              ??                                 ?
+?        ??  ??                          ??  ??                               ?
+?      ??      ??                      ??      ??                             ?
+?  ???????????????????????????????????????????????????????????????            ?
+?  ??              ??              ??              ??                         ?
+???                  ??          ??                  ??                       ?
+?                      ??      ??                      ??                     ?
+?                                                                             ?
+?  USES: Mellow leads, sub-bass variation, arpeggios                          ?
+?  HARMONICS: Odd harmonics only, quieter than square                         ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+### Noise Generator
+
+```csharp
+/// <summary>
+/// White noise generator.
+/// Uses fast PRNG for audio-rate noise.
+/// </summary>
+public class NoiseGenerator
+{
+    // Fast PRNG state
+    private uint _state;
+    
+    public NoiseGenerator(uint seed = 12345)
+    {
+        _state = seed;
+    }
+    
+    /// <summary>
+    /// Generate next white noise sample (-1.0 to +1.0)
+    /// Uses xorshift32 for speed.
+    /// </summary>
+    public double NextSample()
+    {
+        // Xorshift32 PRNG (very fast)
+        _state ^= _state << 13;
+        _state ^= _state >> 17;
+        _state ^= _state << 5;
+        
+        // Convert to -1.0 to +1.0 range
+        return (_state / (double)uint.MaxValue) * 2.0 - 1.0;
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  WHITE NOISE                                                                ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  ? ??  ? ??? ?  ?? ? ? ???  ? ?? ?  ??? ? ??  ? ? ?? ?  ?? ? ???            ?
+?  ??  ?? ?   ?? ?  ?? ??   ?? ?  ?? ?   ?? ? ?? ??   ?? ?  ?? ?              ?
+?  ??????????????????????????????????????????????????????????????????         ?
+?  ? ?  ?  ?  ??  ? ?  ? ?  ?  ? ?  ?  ?  ?  ? ?  ?  ?  ??  ? ?              ?
+?  ?  ??  ?? ??  ??  ??  ? ?? ??  ??  ?? ??  ??  ?? ??  ?  ??  ??             ?
+?                                                                             ?
+?  USES: Hi-hats, snares, explosion effects, wind, static                     ?
+?  FILTERING: Low-pass for rumble, band-pass for snare, high-pass for hats    ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+## ?? ADSR Envelope
+
+```csharp
+/// <summary>
+/// ADSR (Attack-Decay-Sustain-Release) envelope generator.
+/// Shapes amplitude over time for natural-sounding notes.
+/// </summary>
+public class ADSREnvelope
+{
+    public enum State { Idle, Attack, Decay, Sustain, Release }
+    
+    // ADSR parameters (in seconds)
+    public double AttackTime { get; set; } = 0.01;
+    public double DecayTime { get; set; } = 0.1;
+    public double SustainLevel { get; set; } = 0.7;
+    public double ReleaseTime { get; set; } = 0.2;
+    
+    // Current state
+    public State CurrentState { get; private set; } = State.Idle;
+    
+    // Internal state
+    private double _currentLevel;
+    private double _releaseStartLevel;
+    private double _stateTime;
+    private readonly double _sampleRate;
+    private readonly double _sampleDuration;
+    
+    public ADSREnvelope(double sampleRate)
+    {
+        _sampleRate = sampleRate;
+        _sampleDuration = 1.0 / sampleRate;
+    }
+    
+    /// <summary>
+    /// Trigger note on (start attack phase)
+    /// </summary>
+    public void NoteOn()
+    {
+        CurrentState = State.Attack;
+        _stateTime = 0.0;
+    }
+    
+    /// <summary>
+    /// Trigger note off (start release phase)
+    /// </summary>
+    public void NoteOff()
+    {
+        if (CurrentState != State.Idle)
+        {
+            CurrentState = State.Release;
+            _releaseStartLevel = _currentLevel;
+            _stateTime = 0.0;
+        }
+    }
+    
+    /// <summary>
+    /// Get next envelope value (0.0 to 1.0)
+    /// Call once per sample.
+    /// </summary>
+    public double NextSample()
+    {
+        switch (CurrentState)
+        {
+            case State.Attack:
+                _currentLevel = _stateTime / AttackTime;
+                if (_currentLevel >= 1.0)
+                {
+                    _currentLevel = 1.0;
+                    CurrentState = State.Decay;
+                    _stateTime = 0.0;
+                }
+                break;
+                
+            case State.Decay:
+                _currentLevel = 1.0 - ((1.0 - SustainLevel) * (_stateTime / DecayTime));
+                if (_stateTime >= DecayTime)
+                {
+                    _currentLevel = SustainLevel;
+                    CurrentState = State.Sustain;
+                }
+                break;
+                
+            case State.Sustain:
+                _currentLevel = SustainLevel;
+                // Stay here until NoteOff()
+                break;
+                
+            case State.Release:
+                _currentLevel = _releaseStartLevel * (1.0 - (_stateTime / ReleaseTime));
+                if (_stateTime >= ReleaseTime)
+                {
+                    _currentLevel = 0.0;
+                    CurrentState = State.Idle;
+                }
+                break;
+                
+            case State.Idle:
+            default:
+                _currentLevel = 0.0;
+                break;
+        }
+        
+        _stateTime += _sampleDuration;
+        return _currentLevel;
+    }
+    
+    /// <summary>
+    /// Check if envelope has finished
+    /// </summary>
+    public bool IsFinished => CurrentState == State.Idle;
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  ADSR ENVELOPE                                                              ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  Level                                                                      ?
+?    ?                                                                        ?
+?  1.0?        ??                                                             ?
+?    ?       ?  ?                                                             ?
+?    ?      ?    ?                                                            ?
+?    ?     ?      ??????????????????????????                                  ?
+?    ?    ?                                  ??                               ?
+?    ?   ?           SUSTAIN                   ??                             ?
+?    ?  ?            LEVEL                       ??                           ?
+?  0.0????????????????????????????????????????????????????????????            ?
+?    ???????????????????????????????????????????????????????                  ?
+?      ?  A   ?    D    ?          S           ?    R    ?  Time              ?
+?      ?      ?         ?                      ?         ?                    ?
+?    NOTE    PEAK     SUSTAIN               NOTE OFF   SILENT                 ?
+?    ON      VOLUME   HOLD                                                    ?
+?                                                                             ?
+?  TYPICAL VALUES:                                                            ?
+?  ?? Bass:      A=0.01, D=0.1,  S=0.7, R=0.2                                 ?
+?  ?? Lead:      A=0.05, D=0.2,  S=0.6, R=0.3                                 ?
+?  ?? Pad:       A=0.5,  D=0.3,  S=0.8, R=1.0                                 ?
+?  ?? Kick:      A=0.001,D=0.1,  S=0.0, R=0.1                                 ?
+?  ?? Laser SFX: A=0.001,D=0.05, S=0.3, R=0.1                                 ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+## ?? Filters
+
+### Low-Pass Filter (One-Pole)
+
+```csharp
+/// <summary>
+/// Simple one-pole low-pass filter.
+/// Fast but gentle slope (6dB/octave).
+/// </summary>
+public class OnePoleFilter
+{
+    private double _state;
+    private double _coefficient;
+    
+    /// <summary>
+    /// Set filter cutoff frequency
+    /// </summary>
+    public void SetCutoff(double cutoffHz, double sampleRate)
+    {
+        double omega = 2.0 * Math.PI * cutoffHz / sampleRate;
+        _coefficient = Math.Exp(-omega);
+    }
+    
+    public double Process(double input)
+    {
+        _state = input + _coefficient * (_state - input);
+        return _state;
+    }
+    
+    public void Reset()
+    {
+        _state = 0.0;
+    }
+}
+```
+
+### Biquad Filter (Versatile)
+
+```csharp
+/// <summary>
+/// Biquad filter for low-pass, high-pass, band-pass.
+/// 12dB/octave slope, good for most uses.
+/// </summary>
+public class BiquadFilter
+{
+    public enum FilterType { LowPass, HighPass, BandPass }
+    
+    // Coefficients
+    private double _b0, _b1, _b2;
+    private double _a1, _a2;
+    
+    // State
+    private double _x1, _x2;
+    private double _y1, _y2;
+    
+    public void SetParameters(FilterType type, double frequency, 
+                              double q, double sampleRate)
+    {
+        double omega = 2.0 * Math.PI * frequency / sampleRate;
+        double sinOmega = Math.Sin(omega);
+        double cosOmega = Math.Cos(omega);
+        double alpha = sinOmega / (2.0 * q);
+        
+        double a0;
+        
+        switch (type)
+        {
+            case FilterType.LowPass:
+                _b0 = (1.0 - cosOmega) / 2.0;
+                _b1 = 1.0 - cosOmega;
+                _b2 = (1.0 - cosOmega) / 2.0;
+                a0 = 1.0 + alpha;
+                _a1 = -2.0 * cosOmega;
+                _a2 = 1.0 - alpha;
+                break;
+                
+            case FilterType.HighPass:
+                _b0 = (1.0 + cosOmega) / 2.0;
+                _b1 = -(1.0 + cosOmega);
+                _b2 = (1.0 + cosOmega) / 2.0;
+                a0 = 1.0 + alpha;
+                _a1 = -2.0 * cosOmega;
+                _a2 = 1.0 - alpha;
+                break;
+                
+            case FilterType.BandPass:
+                _b0 = alpha;
+                _b1 = 0.0;
+                _b2 = -alpha;
+                a0 = 1.0 + alpha;
+                _a1 = -2.0 * cosOmega;
+                _a2 = 1.0 - alpha;
+                break;
+                
+            default:
+                a0 = 1.0;
+                break;
+        }
+        
+        // Normalize coefficients
+        _b0 /= a0;
+        _b1 /= a0;
+        _b2 /= a0;
+        _a1 /= a0;
+        _a2 /= a0;
+    }
+    
+    public double Process(double input)
+    {
+        double output = _b0 * input + _b1 * _x1 + _b2 * _x2
+                      - _a1 * _y1 - _a2 * _y2;
+        
+        _x2 = _x1;
+        _x1 = input;
+        _y2 = _y1;
+        _y1 = output;
+        
+        return output;
+    }
+    
+    public void Reset()
+    {
+        _x1 = _x2 = 0.0;
+        _y1 = _y2 = 0.0;
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  FILTER FREQUENCY RESPONSES                                                 ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  LOW-PASS                    HIGH-PASS                  BAND-PASS           ?
+?                                                                             ?
+?  ????????????????????        ????????????????????        ???????????????    ?
+?  ????????????????????        ????????????????????        ???????????????    ?
+?  ????????????????????        ????????????????????        ???????????????    ?
+?  ????????????????????        ????????????????????        ???????????????    ?
+?  ????????????????????        ????????????????????        ???????????????    ?
+?  ??????????????????????????????????????????????????????????????????????     ?
+?                                                                             ?
+?  ? = pass      ? = attenuate                                                ?
+?                                                                             ?
+?  USES:                                                                      ?
+?  ?? Low-pass:  Muffled sounds, bass extraction, warmth                      ?
+?  ?? High-pass: Remove rumble, hi-hats, brightness                           ?
+?  ?? Band-pass: Snare body, vowel sounds, telephone effect                   ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+## ?? Drum Synthesizers
+
+### Kick Drum
+
+```csharp
+/// <summary>
+/// Synthesized kick drum.
+/// Uses pitch envelope on sine wave + noise click.
+/// </summary>
+public class KickDrum
+{
+    private readonly SineOscillator _osc;
+    private readonly NoiseGenerator _noise;
+    private readonly ADSREnvelope _ampEnv;
+    
+    // Pitch envelope state
+    private double _pitchEnvTime;
+    private bool _isPlaying;
+    
+    // Parameters
+    public double StartPitch { get; set; } = 150.0;
+    public double EndPitch { get; set; } = 50.0;
+    public double PitchDecay { get; set; } = 0.05;
+    public double ClickAmount { get; set; } = 0.3;
+    public double ClickDecay { get; set; } = 0.01;
+    
+    public KickDrum(double sampleRate)
+    {
+        _osc = new SineOscillator(sampleRate);
+        _noise = new NoiseGenerator();
+        _ampEnv = new ADSREnvelope(sampleRate)
+        {
+            AttackTime = 0.001,
+            DecayTime = 0.15,
+            SustainLevel = 0.0,
+            ReleaseTime = 0.1
+        };
+    }
+    
+    public void Trigger()
+    {
+        _ampEnv.NoteOn();
+        _ampEnv.NoteOff(); // Immediately release (one-shot)
+        _osc.ResetPhase();
+        _pitchEnvTime = 0.0;
+        _isPlaying = true;
+    }
+    
+    public double NextSample()
+    {
+        if (!_isPlaying)
+            return 0.0;
+            
+        // Calculate current pitch (exponential decay)
+        double pitchEnvelope = Math.Exp(-_pitchEnvTime / PitchDecay);
+        double pitch = EndPitch + (StartPitch - EndPitch) * pitchEnvelope;
+        _osc.Frequency = pitch;
+        
+        // Generate sine body
+        double body = _osc.NextSample();
+        
+        // Generate click (noise with fast decay)
+        double clickEnvelope = Math.Exp(-_pitchEnvTime / ClickDecay);
+        double click = _noise.NextSample() * clickEnvelope * ClickAmount;
+        
+        // Combine and apply amplitude envelope
+        double amp = _ampEnv.NextSample();
+        _pitchEnvTime += 1.0 / 48000.0; // TODO: pass sample rate
+        
+        if (_ampEnv.IsFinished)
+            _isPlaying = false;
+            
+        return (body + click) * amp;
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  KICK DRUM SYNTHESIS                                                        ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  PITCH ENVELOPE:                                                            ?
+?  Frequency ?                                                                ?
+?     150 Hz ???                                                              ?
+?            ?  ??                                                            ?
+?            ?    ????                                                        ?
+?      50 Hz ?        ??????????????????????                                  ?
+?            ?????????????????????????????????????????????? Time              ?
+?                 0ms       50ms      100ms     150ms                         ?
+?                                                                             ?
+?  COMPONENTS:                                                                ?
+?  ?? Sine wave (50-150 Hz) - the "thump"                                     ?
+?  ?? Noise burst at start - the "click"                                      ?
+?  ?? Exponential pitch decay - the "punch"                                   ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+### Snare Drum
+
+```csharp
+/// <summary>
+/// Synthesized snare drum.
+/// Uses filtered noise + sine body.
+/// </summary>
+public class SnareDrum
+{
+    private readonly SineOscillator _body;
+    private readonly NoiseGenerator _noise;
+    private readonly BiquadFilter _noiseFilter;
+    private readonly ADSREnvelope _bodyEnv;
+    private readonly ADSREnvelope _noiseEnv;
+    
+    // Parameters
+    public double BodyFreq { get; set; } = 180.0;
+    public double NoiseFilterFreq { get; set; } = 3000.0;
+    public double NoiseFilterQ { get; set; } = 1.5;
+    
+    public SnareDrum(double sampleRate)
+    {
+        _body = new SineOscillator(sampleRate) { Frequency = BodyFreq };
+        _noise = new NoiseGenerator();
+        _noiseFilter = new BiquadFilter();
+        _noiseFilter.SetParameters(BiquadFilter.FilterType.BandPass, 
+                                   NoiseFilterFreq, NoiseFilterQ, sampleRate);
+        
+        _bodyEnv = new ADSREnvelope(sampleRate)
+        {
+            AttackTime = 0.001,
+            DecayTime = 0.05,
+            SustainLevel = 0.0,
+            ReleaseTime = 0.02
+        };
+        
+        _noiseEnv = new ADSREnvelope(sampleRate)
+        {
+            AttackTime = 0.001,
+            DecayTime = 0.15,
+            SustainLevel = 0.0,
+            ReleaseTime = 0.1
+        };
+    }
+    
+    public void Trigger()
+    {
+        _bodyEnv.NoteOn();
+        _bodyEnv.NoteOff();
+        _noiseEnv.NoteOn();
+        _noiseEnv.NoteOff();
+        _body.ResetPhase();
+    }
+    
+    public double NextSample()
+    {
+        // Body tone
+        double body = _body.NextSample() * _bodyEnv.NextSample();
+        
+        // Filtered noise
+        double noise = _noiseFilter.Process(_noise.NextSample());
+        noise *= _noiseEnv.NextSample();
+        
+        // Mix (noise is louder)
+        return body * 0.4 + noise * 0.8;
+    }
+    
+    public bool IsFinished => _bodyEnv.IsFinished && _noiseEnv.IsFinished;
+}
+```
+
+---
+
+### Hi-Hat
+
+```csharp
+/// <summary>
+/// Synthesized hi-hat (closed and open).
+/// Uses high-pass filtered noise.
+/// </summary>
+public class HiHat
+{
+    private readonly NoiseGenerator _noise;
+    private readonly BiquadFilter _highPass;
+    private readonly BiquadFilter _lowPass;
+    private readonly ADSREnvelope _envelope;
+    
+    public HiHat(double sampleRate)
+    {
+        _noise = new NoiseGenerator();
+        
+        // High-pass to remove low frequencies
+        _highPass = new BiquadFilter();
+        _highPass.SetParameters(BiquadFilter.FilterType.HighPass, 
+                                7000.0, 0.7, sampleRate);
+        
+        // Gentle low-pass to smooth
+        _lowPass = new BiquadFilter();
+        _lowPass.SetParameters(BiquadFilter.FilterType.LowPass, 
+                               12000.0, 0.7, sampleRate);
+        
+        _envelope = new ADSREnvelope(sampleRate);
+    }
+    
+    /// <summary>
+    /// Trigger closed hi-hat (short decay)
+    /// </summary>
+    public void TriggerClosed()
+    {
+        _envelope.AttackTime = 0.001;
+        _envelope.DecayTime = 0.03;
+        _envelope.SustainLevel = 0.0;
+        _envelope.ReleaseTime = 0.01;
+        
+        _envelope.NoteOn();
+        _envelope.NoteOff();
+    }
+    
+    /// <summary>
+    /// Trigger open hi-hat (long decay)
+    /// </summary>
+    public void TriggerOpen()
+    {
+        _envelope.AttackTime = 0.001;
+        _envelope.DecayTime = 0.3;
+        _envelope.SustainLevel = 0.0;
+        _envelope.ReleaseTime = 0.2;
+        
+        _envelope.NoteOn();
+        _envelope.NoteOff();
+    }
+    
+    public double NextSample()
+    {
+        double noise = _noise.NextSample();
+        noise = _highPass.Process(noise);
+        noise = _lowPass.Process(noise);
+        return noise * _envelope.NextSample();
+    }
+    
+    public bool IsFinished => _envelope.IsFinished;
+}
+```
+
+---
+
+## ?? SFX Synthesizers
+
+### Laser Shot
+
+```csharp
+/// <summary>
+/// Laser/blaster sound effect.
+/// Uses falling pitch envelope.
+/// </summary>
+public class LaserSFX
+{
+    private readonly SquareOscillator _osc;
+    private readonly ADSREnvelope _envelope;
+    
+    private double _time;
+    private bool _isPlaying;
+    
+    // Parameters
+    public double StartPitch { get; set; } = 2000.0;
+    public double EndPitch { get; set; } = 400.0;
+    public double PitchDecay { get; set; } = 0.08;
+    public double Duration { get; set; } = 0.1;
+    
+    public LaserSFX(double sampleRate)
+    {
+        _osc = new SquareOscillator(sampleRate) { PulseWidth = 0.3 };
+        _envelope = new ADSREnvelope(sampleRate)
+        {
+            AttackTime = 0.001,
+            DecayTime = 0.08,
+            SustainLevel = 0.2,
+            ReleaseTime = 0.05
+        };
+    }
+    
+    public void Trigger()
+    {
+        _envelope.NoteOn();
+        _time = 0.0;
+        _isPlaying = true;
+        _osc.ResetPhase();
+    }
+    
+    public double NextSample()
+    {
+        if (!_isPlaying)
+            return 0.0;
+            
+        // Pitch envelope
+        double pitchEnv = Math.Exp(-_time / PitchDecay);
+        _osc.Frequency = EndPitch + (StartPitch - EndPitch) * pitchEnv;
+        
+        double sample = _osc.NextSample() * _envelope.NextSample();
+        
+        _time += 1.0 / 48000.0;
+        
+        // Auto-release
+        if (_time > Duration)
+        {
+            _envelope.NoteOff();
+        }
+        
+        if (_envelope.IsFinished)
+            _isPlaying = false;
+            
+        return sample;
+    }
+    
+    public bool IsFinished => !_isPlaying;
+}
+```
+
+---
+
+### Explosion
+
+```csharp
+/// <summary>
+/// Explosion sound effect.
+/// Uses filtered noise with frequency sweep.
+/// </summary>
+public class ExplosionSFX
+{
+    private readonly NoiseGenerator _noise;
+    private readonly BiquadFilter _filter;
+    private readonly SineOscillator _subBass;
+    private readonly ADSREnvelope _noiseEnv;
+    private readonly ADSREnvelope _bassEnv;
+    
+    private double _time;
+    private bool _isPlaying;
+    private readonly double _sampleRate;
+    
+    // Parameters
+    public double StartFilterFreq { get; set; } = 4000.0;
+    public double EndFilterFreq { get; set; } = 200.0;
+    public double FilterDecay { get; set; } = 0.3;
+    public double Duration { get; set; } = 1.0;
+    
+    public ExplosionSFX(double sampleRate)
+    {
+        _sampleRate = sampleRate;
+        _noise = new NoiseGenerator();
+        _filter = new BiquadFilter();
+        _subBass = new SineOscillator(sampleRate) { Frequency = 50.0 };
+        
+        _noiseEnv = new ADSREnvelope(sampleRate)
+        {
+            AttackTime = 0.001,
+            DecayTime = 0.5,
+            SustainLevel = 0.0,
+            ReleaseTime = 0.3
+        };
+        
+        _bassEnv = new ADSREnvelope(sampleRate)
+        {
+            AttackTime = 0.001,
+            DecayTime = 0.2,
+            SustainLevel = 0.0,
+            ReleaseTime = 0.1
+        };
+    }
+    
+    public void Trigger()
+    {
+        _noiseEnv.NoteOn();
+        _noiseEnv.NoteOff();
+        _bassEnv.NoteOn();
+        _bassEnv.NoteOff();
+        _time = 0.0;
+        _isPlaying = true;
+    }
+    
+    public double NextSample()
+    {
+        if (!_isPlaying)
+            return 0.0;
+            
+        // Filter frequency sweep
+        double filterEnv = Math.Exp(-_time / FilterDecay);
+        double filterFreq = EndFilterFreq + 
+                           (StartFilterFreq - EndFilterFreq) * filterEnv;
+        _filter.SetParameters(BiquadFilter.FilterType.LowPass, 
+                              filterFreq, 1.0, _sampleRate);
+        
+        // Noise body
+        double noise = _filter.Process(_noise.NextSample());
+        noise *= _noiseEnv.NextSample();
+        
+        // Sub-bass impact
+        double bass = _subBass.NextSample() * _bassEnv.NextSample();
+        
+        _time += 1.0 / _sampleRate;
+        
+        if (_noiseEnv.IsFinished && _bassEnv.IsFinished)
+            _isPlaying = false;
+            
+        return noise * 0.6 + bass * 0.5;
+    }
+    
+    public bool IsFinished => !_isPlaying;
+}
+```
+
+---
+
+## ?? Music Sequencer
+
+```csharp
+/// <summary>
+/// Step sequencer for pattern-based music.
+/// Triggers notes on beat.
+/// </summary>
+public class Sequencer
+{
+    // Timing
+    public double BPM { get; set; } = 120.0;
+    public int StepsPerBeat { get; } = 4; // 16th notes
+    
+    // Current position
+    public int CurrentStep { get; private set; }
+    public int TotalSteps { get; } = 64; // 4 bars × 16 steps
+    
+    private double _stepDuration;
+    private double _stepTimer;
+    private readonly double _sampleRate;
+    
+    // Patterns (bit flags per step)
+    // Bit 0 = kick, Bit 1 = snare, Bit 2 = closed hat, Bit 3 = open hat
+    public byte[] DrumPattern { get; set; }
+    
+    // Bass notes (MIDI note numbers, 0 = rest)
+    public byte[] BassPattern { get; set; }
+    
+    // Events
+    public event Action<int> OnStepTrigger;
+    
+    public Sequencer(double sampleRate)
+    {
+        _sampleRate = sampleRate;
+        UpdateTiming();
+        
+        // Initialize default patterns
+        DrumPattern = new byte[TotalSteps];
+        BassPattern = new byte[TotalSteps];
+    }
+    
+    public void SetBPM(double bpm)
+    {
+        BPM = bpm;
+        UpdateTiming();
+    }
+    
+    private void UpdateTiming()
+    {
+        // Duration of one step in seconds
+        _stepDuration = 60.0 / BPM / StepsPerBeat;
+    }
+    
+    /// <summary>
+    /// Advance the sequencer by one sample.
+    /// Call in OnAudioFilterRead.
+    /// </summary>
+    public void Tick()
+    {
+        _stepTimer += 1.0 / _sampleRate;
+        
+        if (_stepTimer >= _stepDuration)
+        {
+            _stepTimer -= _stepDuration;
+            
+            // Advance step
+            CurrentStep = (CurrentStep + 1) % TotalSteps;
+            
+            // Fire event
+            OnStepTrigger?.Invoke(CurrentStep);
+        }
+    }
+    
+    /// <summary>
+    /// Get drum triggers for current step
+    /// </summary>
+    public byte GetDrumTriggers()
+    {
+        return DrumPattern[CurrentStep];
+    }
+    
+    /// <summary>
+    /// Get bass note for current step (0 = rest)
+    /// </summary>
+    public byte GetBassNote()
+    {
+        return BassPattern[CurrentStep];
+    }
+}
+```
+
+---
+
+## ?? MIDI Note Utilities
+
+```csharp
+/// <summary>
+/// Utilities for converting MIDI notes to frequencies.
+/// </summary>
+public static class MidiUtils
+{
+    // A4 = MIDI note 69 = 440Hz
+    private const double A4Frequency = 440.0;
+    private const int A4MidiNote = 69;
+    
+    /// <summary>
+    /// Convert MIDI note number to frequency in Hz.
+    /// </summary>
+    public static double NoteToFrequency(int midiNote)
+    {
+        return A4Frequency * Math.Pow(2.0, (midiNote - A4MidiNote) / 12.0);
+    }
+    
+    /// <summary>
+    /// Get frequencies for a scale starting at root note.
+    /// </summary>
+    public static double[] GetScaleFrequencies(int rootNote, int[] intervals, int octaves)
+    {
+        var frequencies = new List<double>();
+        
+        for (int octave = 0; octave < octaves; octave++)
+        {
+            foreach (int interval in intervals)
+            {
+                int note = rootNote + interval + (octave * 12);
+                frequencies.Add(NoteToFrequency(note));
+            }
+        }
+        
+        return frequencies.ToArray();
+    }
+    
+    // Common scale intervals
+    public static readonly int[] MinorScale = { 0, 2, 3, 5, 7, 8, 10 };
+    public static readonly int[] MajorScale = { 0, 2, 4, 5, 7, 9, 11 };
+    public static readonly int[] PhrygianScale = { 0, 1, 3, 5, 7, 8, 10 };
+    public static readonly int[] DorianScale = { 0, 2, 3, 5, 7, 9, 10 };
+    
+    // Common note names
+    public const int C2 = 36;
+    public const int C3 = 48;
+    public const int C4 = 60;  // Middle C
+    public const int C5 = 72;
+    public const int A4 = 69;  // Concert A (440Hz)
+}
+```
+
+---
+
+## ? Performance Optimization
+
+```csharp
+/// <summary>
+/// Pre-calculated sine lookup table for fast synthesis.
+/// </summary>
+public class SineLUT
+{
+    private readonly double[] _table;
+    private readonly int _size;
+    
+    public SineLUT(int tableSize = 1024)
+    {
+        _size = tableSize;
+        _table = new double[tableSize];
+        
+        for (int i = 0; i < tableSize; i++)
+        {
+            _table[i] = Math.Sin(2.0 * Math.PI * i / tableSize);
+        }
+    }
+    
+    /// <summary>
+    /// Get sine value for phase (0.0 to 1.0)
+    /// Uses linear interpolation for smooth output.
+    /// </summary>
+    public double GetSine(double phase)
+    {
+        // Wrap phase
+        phase = phase - Math.Floor(phase);
+        
+        // Calculate table position
+        double position = phase * _size;
+        int index = (int)position;
+        double fraction = position - index;
+        
+        // Linear interpolation
+        int nextIndex = (index + 1) % _size;
+        return _table[index] + fraction * (_table[nextIndex] - _table[index]);
+    }
+}
+```
+
+```
+???????????????????????????????????????????????????????????????????????????????
+?  AUDIO PERFORMANCE GUIDELINES                                               ?
+???????????????????????????????????????????????????????????????????????????????
+?                                                                             ?
+?  ? DO:                                                                      ?
+?  ?? Use lookup tables for sin/cos                                           ?
+?  ?? Pre-calculate filter coefficients                                       ?
+?  ?? Pool voice objects (no allocations during playback)                     ?
+?  ?? Use double precision for oscillators (avoids drift)                     ?
+?  ?? Skip processing for silent voices                                       ?
+?  ?? Batch parameter updates at buffer start                                 ?
+?                                                                             ?
+?  ? DON'T:                                                                   ?
+?  ?? Allocate memory in OnAudioFilterRead                                    ?
+?  ?? Use Unity API in audio thread                                           ?
+?  ?? Lock on shared resources without timeout                                ?
+?  ?? Process more voices than needed                                         ?
+?                                                                             ?
+?  VOICE LIMITS:                                                              ?
+?  ?? Music: 4 tracks (always playing)                                        ?
+?  ?? Drums: 4 voices (pooled)                                                ?
+?  ?? SFX: 16 voices max (oldest killed)                                      ?
+?  ?? Total: 24 voices max                                                    ?
+?                                                                             ?
+???????????????????????????????????????????????????????????????????????????????
+```
+
+---
+
+*Previous: [06-SDFShaderReference.md](06-SDFShaderReference.md)*
+*Back to: [README.md](README.md)*
